@@ -1,0 +1,54 @@
+# Skyridge Mower Base Template
+# ArduPilot Rover 4.5+ — Autonomous Mower Configuration
+# Apply with: mower-provision write templates/mower_base.param
+
+# Vehicle Type (Rover)
+FRAME_CLASS,2
+
+# Steering & Throttle
+CRUISE_SPEED,2
+CRUISE_THROTTLE,40
+SPEED_MAX,3
+WP_SPEED,2
+TURN_RADIUS,0.5
+
+# Navigation
+WP_RADIUS,2
+NAVL1_PERIOD,8
+NAVL1_DAMPING,0.75
+
+# Waypoint behavior
+WP_OVERSHOOT,1
+MIS_RESTART,0
+
+# Pivot turns for tight mowing patterns
+PIVOT_TURN_ANGLE,60
+PIVOT_TURN_RATE,90
+
+# Motor configuration (skid steer)
+SERVO1_FUNCTION,73
+SERVO3_FUNCTION,74
+MOT_THR_MIN,0
+MOT_THR_MAX,100
+
+# Fence (safety boundary)
+FENCE_ENABLE,1
+FENCE_ACTION,1
+FENCE_TYPE,2
+FENCE_RADIUS,100
+
+# Arming
+ARMING_CHECK,1
+
+# Serial (GPS on Serial3)
+SERIAL3_PROTOCOL,5
+SERIAL3_BAUD,115
+
+# Logging
+LOG_BITMASK,176126
+
+# Battery failsafe
+BATT_LOW_VOLT,10.5
+BATT_CRT_VOLT,10.0
+BATT_FS_LOW_ACT,1
+BATT_FS_CRT_ACT,3
