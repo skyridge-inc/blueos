@@ -1,0 +1,38 @@
+
+# MediaMTX configuration file
+paths:
+  input:
+    # RouteCAM RTSP stream via TCP
+    source: rtsp://10.0.0.24:5005/routecam
+    rtspTransport: tcp
+
+  compressed:
+    runOnInit: >
+      ffmpeg -fflags +genpts+igndts
+      -max_delay 500
+      -rtsp_transport tcp
+      -err_detect ignore_err
+      -i rtsp://localhost:8555/input
+      -vf scale=640:360,fps=10
+      -c:v libx264
+      -preset ultrafast
+      -tune zerolatency
+      -g 5
+      -keyint_min 1
+      -sc_threshold 0
+      -max_muxing_queue_size 1024
+      -f rtsp rtsp://localhost:8555/compressed
+    runOnInitRestart: yes
+
+# RTSP settings
+rtspAddress: :8555
+
+# WebRTC settings (for Cockpit)
+webrtcAddress: :8889
+webrtcICEServers: ["stun:stun.l.google.com:19302"]
+
+# Disable unused features
+api: false
+metrics: false
+pprof: false
+logLevel: debug

@@ -1,0 +1,9 @@
+# MCM configuration
+streams:
+  - name: "Route Camera"
+    source: "redirect"
+    redirect_url: "rtsp://localhost:8554/routecam_h264"
+    encode:
+      video:
+        codec: "H264"
+        bitrate: 2000000

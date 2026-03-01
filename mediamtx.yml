@@ -1,0 +1,7 @@
+paths:
+  "~^front$":
+    # Media MTX server URL:  rtsp://sky-1.netbird.cloud:8554/front
+    # If path name is a regular expression, $G1, G2, etc will be replaced
+    # with regular expression groups.
+    source: rtsp://10.0.0.24:5005/routecam
+    sourceOnDemand: yes
