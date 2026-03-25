@@ -1,7 +1,70 @@
+###############################################
+# MediaMTX Configuration for BlueOS Extension
+# - H.265 raw passthrough on RTSP port 8555
+# - H.265 → H.264 transcode on RTSP port 8555
+###############################################
+
+# ====================
+# Global Settings
+# ====================
+logLevel: info
+api: no
+metrics: no
+pprof: no
+
+# ====================
+# RTSP Server
+# ====================
+rtspAddress: :8555
+
+# ====================
+# Single instance, single port
+#   Both streams served on port 8555:
+#     - rtsp://<blueos-ip>:8555/front_h265  (raw H.265)
+#     - rtsp://<blueos-ip>:8555/front        (transcoded H.264)
+# ====================
+
+# ====================
+# WebRTC Settings
+# ====================
+webrtcAddress: :8889
+webrtcICEServers: ["stun:stun.l.google.com:19302"]
+
+# ====================
+# Paths
+# ====================
 paths:
-  "~^front$":
-    # Media MTX server URL:  rtsp://sky-1.netbird.cloud:8554/front
-    # If path name is a regular expression, $G1, G2, etc will be replaced
-    # with regular expression groups.
-    source: rtsp://10.0.0.24:5005/routecam
-    sourceOnDemand: yes
+  # -------------------------------------------------
+  # Path 1: Ingest the H.265 source from the camera
+  # Available at: rtsp://<blueos-ip>:8555/front_h265
+  # This is the raw, untouched H.265 stream.
+  # -------------------------------------------------
+  front_h265:
+    source: rtsp://192.168.1.10:5005/routecam
+    sourceProtocol: automatic
+    sourceOnDemand: no
+
+  # -------------------------------------------------
+  # Path 2: H.265 → H.264 transcoded stream
+  # Available at: rtsp://<blueos-ip>:8555/front
+  #
+  # FFmpeg reads the H.265 source from Path 1,
+  # transcodes to H.264, and publishes back to
+  # MediaMTX as a new path.
+  # -------------------------------------------------
+  front:
+    runOnInit: >
+      ffmpeg
+      -fflags +genpts+igndts
+      -rtsp_transport tcp
+      -i rtsp://localhost:8555/front_h265
+      -map 0:v:0
+      -pix_fmt yuv420p
+      -c:v libx264
+      -preset ultrafast
+      -tune zerolatency
+      -b:v 2000k
+      -g 30
+      -max_muxing_queue_size 1024
+      -f rtsp rtsp://localhost:8555/front
+    runOnInitRestart: yes
