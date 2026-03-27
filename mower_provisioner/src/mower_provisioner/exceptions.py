@@ -27,3 +27,11 @@ class ParameterWriteError(ParameterError):
 
 class ParamFileError(MowerProvisionerError):
     """Error reading or writing .param files."""
+
+
+class BlueOSError(MowerProvisionerError):
+    """Error communicating with BlueOS HTTP API."""
+
+
+class BlueOSConnectionError(BlueOSError):
+    """Cannot reach the BlueOS device."""

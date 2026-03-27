@@ -1,0 +1,46 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Build & Test
+
+```bash
+uv sync                                    # install deps (never use pip)
+uv run pytest                              # all tests
+uv run pytest --tb=short -v                # verbose with short tracebacks
+uv run pytest tests/test_params.py         # single file
+uv run pytest tests/test_params.py::TestDiffParams::test_mixed_changes  # single test
+uv tool install .                          # install CLI globally
+mower-provision --help                     # CLI entry point
+```
+
+No linter or formatter configured.
+
+## Architecture
+
+Python 3.11+ CLI built with Typer, managed by uv + hatchling. Entry point: `cli:app` (registered as `mower-provision`).
+
+**Data flow**: `.param` file <-> `config.py` (I/O + filtering) <-> `params.py` (MAVLink operations) <-> `connection.py` (device transport)
+
+**Module responsibilities**:
+- `config.py` — File I/O and the `CALIBRATION_PARAMS` frozenset (~70 vehicle-specific params). This is the safety gate — all load/save/write/diff operations filter through it unless `--include-calibration` is passed.
+- `connection.py` — `mavlink_connection()` context manager: connect -> heartbeat wait -> yield -> close. All CLI commands use this.
+- `params.py` — `fetch_all_params()` uses index-based gap detection (not simple request-and-wait): requests all, waits, then re-requests missing indices in batches of 10. `write_params()` sends individually with PARAM_VALUE ack + 3 retries. `diff_params()` uses `EPSILON = 1e-6` float tolerance.
+- `cli.py` — Six Typer commands: `connect`, `read`, `write`, `diff`, `sync`, `backup`. Shared options via `Annotated` type aliases (`DeviceOption`, `BaudOption`, `CalibrationOption`). Uses Rich progress bars and tables for output.
+- `exceptions.py` — Hierarchy rooted at `MowerProvisionerError`. Connection errors, param errors, and file errors are separate branches.
+
+## Key Design Decisions
+
+- **Calibration protection is the core safety mechanism.** `CALIBRATION_PARAMS` excludes IMU, compass, battery, RC, and SYSID params from all operations by default. Do not weaken this without explicit intent. The `--include-calibration` flag is the only override.
+- **`sync` command passes `include_calibration=True` to `write_params`** because it has already filtered through `diff_params`. This is intentional — don't add a second filter.
+- **`backup` always includes calibration** (`include_calibration=True`) to capture complete device state.
+- **Integer-valued floats** are written without decimals in .param files (e.g., `3` not `3.0`) for ArduPilot compatibility.
+
+## Testing Patterns
+
+Tests mock the MAVLink connection via `conftest.py::mock_conn` fixture (MagicMock with `target_system`, `target_component`, `mav`). No integration tests against real hardware.
+
+- `test_config.py` — .param file round-trip, format parsing (comma and space), calibration filtering, error cases
+- `test_params.py` — diff logic (epsilon tolerance, calibration exclusion), write ack/retry, fetch with progress callbacks
+
+To simulate param messages in fetch tests, use `_make_param_msg()` helper that creates MagicMock with `param_id` (bytes), `param_value`, `param_index`, `param_count`.

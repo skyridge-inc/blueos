@@ -320,3 +320,53 @@ def backup(
     console.print(
         f"[green]Backed up {len(params)} parameters to {output_path}[/green]"
     )
+
+
+@app.command("extract-config")
+def extract_config_cmd(
+    url: Annotated[
+        str,
+        typer.Argument(help="BlueOS device URL (e.g., http://blueos.local or 192.168.2.2)."),
+    ],
+    output: Annotated[
+        Optional[Path],
+        typer.Option("--output", "-o", help="Output YAML file path. Default: <hostname>.yaml"),
+    ] = None,
+    timeout: Annotated[
+        float,
+        typer.Option("--timeout", "-t", help="HTTP request timeout in seconds."),
+    ] = 10.0,
+) -> None:
+    """Extract full configuration from a BlueOS device to YAML."""
+    import httpx as _httpx
+
+    from .blueos_api import BlueOSClient
+    from .exceptions import BlueOSConnectionError
+    from .extract import extract_config, output_filename, save_yaml
+
+    # Normalize URL
+    if not url.startswith("http"):
+        url = f"http://{url}"
+
+    out_path = output or output_filename(url)
+
+    with console.status(f"Connecting to {url}..."):
+        client = BlueOSClient(url, timeout=_httpx.Timeout(timeout, read=timeout * 3))
+
+    with client:
+        try:
+            with console.status("Extracting configuration..."):
+                config = extract_config(client)
+        except BlueOSConnectionError as e:
+            err_console.print(f"[red]{e}[/red]")
+            raise typer.Exit(1)
+
+    save_yaml(config, out_path)
+
+    # Summary
+    ext_count = len(config.get("extensions") or [])
+    console.print(f"[green]Configuration saved to {out_path}[/green]")
+    console.print(f"  Extensions: {ext_count}")
+    nulls = [k for k, v in config.items() if v is None and not k.startswith("_")]
+    if nulls:
+        err_console.print(f"[yellow]Warning: Could not reach: {', '.join(nulls)}[/yellow]")

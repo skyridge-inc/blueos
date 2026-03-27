@@ -1,0 +1,87 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1774644867352,
+  "projectRoot": "/home/jeff/code/skyridge/blueos",
+  "techStack": {
+    "languages": [],
+    "frameworks": [],
+    "packageManager": null,
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": null,
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs"
+    ],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 1,
+      "lastAccessed": 1774644867349,
+      "keyFiles": [
+        "RC_CONFIG_MGT.md"
+      ]
+    },
+    "mower_provisioner": {
+      "path": "mower_provisioner",
+      "purpose": null,
+      "fileCount": 5,
+      "lastAccessed": 1774644867351,
+      "keyFiles": [
+        "CLAUDE.md",
+        "PRD.md",
+        "README.md",
+        "pyproject.toml",
+        "uv.lock"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "mower_provisioner/src/mower_provisioner/blueos_api.py",
+      "accessCount": 1,
+      "lastAccessed": 1774645108690,
+      "type": "file"
+    },
+    {
+      "path": "mower_provisioner/src/mower_provisioner/extract.py",
+      "accessCount": 1,
+      "lastAccessed": 1774645108927,
+      "type": "file"
+    },
+    {
+      "path": "mower_provisioner/src/mower_provisioner/cli.py",
+      "accessCount": 1,
+      "lastAccessed": 1774645109235,
+      "type": "file"
+    },
+    {
+      "path": "mower_provisioner/src/mower_provisioner/exceptions.py",
+      "accessCount": 1,
+      "lastAccessed": 1774645109366,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

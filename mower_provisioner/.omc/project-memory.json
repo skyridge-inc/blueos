@@ -1,0 +1,200 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1774392417501,
+  "projectRoot": "/home/jeff/code/skyridge/blueos/mower_provisioner",
+  "techStack": {
+    "languages": [
+      {
+        "name": "Python",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "pyproject.toml"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "pytest",
+        "version": null,
+        "category": "testing"
+      }
+    ],
+    "packageManager": null,
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": "pytest",
+    "lintCommand": "ruff check",
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "src",
+      "tests"
+    ],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "openspec": {
+      "path": "openspec",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1774392417496,
+      "keyFiles": []
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 0,
+      "lastAccessed": 1774392417497,
+      "keyFiles": []
+    },
+    "templates": {
+      "path": "templates",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1774392417498,
+      "keyFiles": [
+        "mower_base.param"
+      ]
+    },
+    "tests": {
+      "path": "tests",
+      "purpose": "Test files",
+      "fileCount": 4,
+      "lastAccessed": 1774392417499,
+      "keyFiles": [
+        "__init__.py",
+        "conftest.py",
+        "test_config.py",
+        "test_params.py"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "pyproject.toml",
+      "accessCount": 5,
+      "lastAccessed": 1774395154956,
+      "type": "file"
+    },
+    {
+      "path": "src/mower_provisioner/cli.py",
+      "accessCount": 5,
+      "lastAccessed": 1774395212051,
+      "type": "file"
+    },
+    {
+      "path": "",
+      "accessCount": 4,
+      "lastAccessed": 1774392433750,
+      "type": "directory"
+    },
+    {
+      "path": "src/mower_provisioner/exceptions.py",
+      "accessCount": 4,
+      "lastAccessed": 1774395173073,
+      "type": "file"
+    },
+    {
+      "path": "src/mower_provisioner/connection.py",
+      "accessCount": 3,
+      "lastAccessed": 1774393029771,
+      "type": "file"
+    },
+    {
+      "path": "src/mower_provisioner/config.py",
+      "accessCount": 3,
+      "lastAccessed": 1774393034304,
+      "type": "file"
+    },
+    {
+      "path": "tests/conftest.py",
+      "accessCount": 3,
+      "lastAccessed": 1774393039016,
+      "type": "file"
+    },
+    {
+      "path": "src/mower_provisioner/params.py",
+      "accessCount": 2,
+      "lastAccessed": 1774392765050,
+      "type": "file"
+    },
+    {
+      "path": "tests/test_config.py",
+      "accessCount": 2,
+      "lastAccessed": 1774392770643,
+      "type": "file"
+    },
+    {
+      "path": "src/mower_provisioner/__init__.py",
+      "accessCount": 2,
+      "lastAccessed": 1774393034714,
+      "type": "file"
+    },
+    {
+      "path": "tests/test_params.py",
+      "accessCount": 1,
+      "lastAccessed": 1774392440729,
+      "type": "file"
+    },
+    {
+      "path": "CLAUDE.md",
+      "accessCount": 1,
+      "lastAccessed": 1774392470570,
+      "type": "file"
+    },
+    {
+      "path": "README.md",
+      "accessCount": 1,
+      "lastAccessed": 1774392767449,
+      "type": "file"
+    },
+    {
+      "path": "PRD.md",
+      "accessCount": 1,
+      "lastAccessed": 1774392773798,
+      "type": "file"
+    },
+    {
+      "path": "src/mower_provisioner/blueos_api.py",
+      "accessCount": 1,
+      "lastAccessed": 1774395185403,
+      "type": "file"
+    },
+    {
+      "path": "src/mower_provisioner/extract.py",
+      "accessCount": 1,
+      "lastAccessed": 1774395192821,
+      "type": "file"
+    },
+    {
+      "path": "tests/test_extract.py",
+      "accessCount": 1,
+      "lastAccessed": 1774395235996,
+      "type": "file"
+    },
+    {
+      "path": "tests/test_blueos_api.py",
+      "accessCount": 1,
+      "lastAccessed": 1774395250069,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

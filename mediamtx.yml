@@ -20,8 +20,8 @@ rtspAddress: :8555
 # ====================
 # Single instance, single port
 #   Both streams served on port 8555:
-#     - rtsp://<blueos-ip>:8555/front_h265  (raw H.265)
-#     - rtsp://<blueos-ip>:8555/front        (transcoded H.264)
+#     - rtsp://<blueos-ip>:8555/front_h265  (raw H.265 1080p60)
+#     - rtsp://<blueos-ip>:8555/front        (transcoded H.264 720p30)
 # ====================
 
 # ====================
@@ -37,7 +37,8 @@ paths:
   # -------------------------------------------------
   # Path 1: Ingest the H.265 source from the camera
   # Available at: rtsp://<blueos-ip>:8555/front_h265
-  # This is the raw, untouched H.265 stream.
+  # This is the raw, untouched H.265 1080p60 stream.
+  # Source: e-con RouteCAM hevc (Main), 1920x1080, 60fps
   # -------------------------------------------------
   front_h265:
     source: rtsp://192.168.1.10:5005/routecam
@@ -48,34 +49,41 @@ paths:
   # Path 2: H.265 → H.264 transcoded stream
   # Available at: rtsp://<blueos-ip>:8555/front
   #
-  # FFmpeg reads the H.265 source from Path 1,
-  # transcodes to H.264, and publishes back to
-  # MediaMTX as a new path.
+  # Source is 1080p60 H.265. FFmpeg:
+  #   - Decodes H.265 at 60fps (CPU-intensive)
+  #   - Drops to 30fps (-vf fps=30) halving decode+encode work
+  #   - Scales to 720p halving pixel count
+  #   - Encodes H.264 baseline with slice threading
+  #   - Publishes back to MediaMTX via TCP loopback
   # -------------------------------------------------
   front:
     runOnInit: >
       ffmpeg
       -fflags +genpts+igndts+nobuffer
       -flags low_delay
-      -rtsp_transport tcp
+      -rtsp_transport udp
       -analyzeduration 500000
       -probesize 500000
       -i rtsp://localhost:8555/front_h265
       -map 0:v:0
       -pix_fmt yuv420p
+      -vf "fps=30,scale=1280:720"
       -c:v libx264
-      -preset superfast
+      -preset ultrafast
       -tune zerolatency
       -profile:v baseline
-      -level 4.0
-      -b:v 2000k
-      -maxrate 2000k
-      -bufsize 2000k
-      -g 15
-      -keyint_min 15
+      -level 3.1
+      -b:v 1500k
+      -maxrate 1500k
+      -bufsize 750k
+      -g 30
+      -keyint_min 30
       -sc_threshold 0
       -bf 0
-      -threads 3
-      -max_muxing_queue_size 1024
+      -threads 4
+      -thread_type slice
+      -slices 4
+      -max_muxing_queue_size 2048
+      -rtsp_transport tcp
       -f rtsp rtsp://localhost:8555/front
     runOnInitRestart: yes
