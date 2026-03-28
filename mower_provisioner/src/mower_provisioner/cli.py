@@ -457,8 +457,7 @@ def download(
     else:
         err_console.print("  MediaMTX config: [yellow]not found[/yellow]")
     nulls = [k for k, v in config.items()
-             if v is None and not k.startswith("_")
-             and k not in ("autopilot_params", "mediamtx")]
+             if v is None and k not in ("autopilot_params", "mediamtx")]
     if nulls:
         err_console.print(f"[yellow]Warning: Could not reach: {', '.join(nulls)}[/yellow]")
 
@@ -508,6 +507,15 @@ def upload(
     mediamtx = config.get("mediamtx")
     if mediamtx and isinstance(mediamtx, dict) and mediamtx.get("config"):
         changes.append(f"  MediaMTX config: {mediamtx.get('config_path', 'unknown path')}")
+    network = config.get("network")
+    if network and isinstance(network, dict) and network.get("ethernet"):
+        unmanaged_count = sum(
+            1 for iface in network["ethernet"]
+            for addr in (iface.get("addresses") or [])
+            if addr.get("mode") == "unmanaged"
+        )
+        if unmanaged_count:
+            changes.append(f"  Static IPs (unmanaged): {unmanaged_count}")
     params = config.get("autopilot_params")
     if params and isinstance(params, dict):
         if not include_calibration:
@@ -567,6 +575,35 @@ def upload(
                         uploaded.append("mediamtx config")
                     else:
                         err_console.print("[yellow]Warning: Failed to push MediaMTX config[/yellow]")
+
+                # Add unmanaged (static) IPs that are missing from the device
+                if network and isinstance(network, dict) and network.get("ethernet"):
+                    current = client.get_ethernet() or []
+                    current_ips: dict[str, set[str]] = {}
+                    for iface in current:
+                        name = iface.get("name", "")
+                        current_ips[name] = {
+                            a.get("ip") for a in (iface.get("addresses") or [])
+                        }
+
+                    ip_ok = 0
+                    for iface in network["ethernet"]:
+                        iface_name = iface.get("name", "")
+                        for addr in (iface.get("addresses") or []):
+                            if addr.get("mode") != "unmanaged":
+                                continue
+                            ip = addr.get("ip", "")
+                            if ip in current_ips.get(iface_name, set()):
+                                ip_ok += 1
+                                continue
+                            if client.add_ip(iface_name, ip):
+                                ip_ok += 1
+                            else:
+                                err_console.print(
+                                    f"[yellow]Warning: Failed to add {ip} to {iface_name}[/yellow]"
+                                )
+                    if ip_ok:
+                        uploaded.append(f"static IPs ({ip_ok})")
         except BlueOSConnectionError as e:
             err_console.print(f"[red]{e}[/red]")
             raise typer.Exit(1)

@@ -31,16 +31,11 @@ def _mock_blueos_client():
     client.__exit__ = MagicMock(return_value=False)
     client.get_hostname.return_value = "blueos"
     client.get_vehicle_name.return_value = "Mower-01"
-    client.get_version.return_value = {"tag": "1.5.0"}
-    client.get_board.return_value = None
-    client.get_firmware_info.return_value = None
-    client.get_serials.return_value = []
     client.get_extensions.return_value = [{"identifier": "ext.test"}]
     client.get_bag.return_value = {"key1": "value1"}
     client.get_ethernet.return_value = []
     client.get_wifi_saved.return_value = []
     client.get_hotspot.return_value = None
-    client.get_web_services.return_value = []
     # file browser — default: MediaMTX config found at first candidate
     client.get_file.return_value = "logLevel: info\nrtspAddress: ':8555'\n"
     client.put_file.return_value = True
@@ -237,7 +232,7 @@ class TestUpload:
 
     def test_empty_config(self, tmp_path):
         cfg = tmp_path / "empty.yaml"
-        cfg.write_text(yaml.dump({"blueos_version": {"tag": "1.0"}}))
+        cfg.write_text(yaml.dump({"network": {"hotspot": True}}))
 
         result = runner.invoke(app, ["upload", "192.168.2.2", str(cfg)])
         assert result.exit_code == 0

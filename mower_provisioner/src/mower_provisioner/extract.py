@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -72,11 +71,42 @@ def output_filename(url: str) -> Path:
     return Path(f"{host}.yaml")
 
 
-def extract_config(client: BlueOSClient) -> dict[str, Any]:
-    """Fetch all configuration sections from a BlueOS device.
+def _clean_ethernet(raw: list[Any] | None) -> list[dict[str, Any]] | None:
+    """Strip ephemeral routing/info from ethernet entries, keep addresses."""
+    if raw is None:
+        return None
+    cleaned = []
+    for iface in raw:
+        if not isinstance(iface, dict):
+            continue
+        entry: dict[str, Any] = {"name": iface.get("name")}
+        if "addresses" in iface:
+            entry["addresses"] = iface["addresses"]
+        cleaned.append(entry)
+    return cleaned
 
-    Each section that fails to fetch is stored as None.
-    Returns a structured dict ready for YAML serialization.
+
+# Bag keys that are ephemeral / per-session and should not be provisioned.
+_BAG_EXCLUDE_KEYS = frozenset({
+    "settings",   # BlueOS UI prefs (dark mode, tour state, notification timestamps)
+    "wizard",     # setup wizard completion — re-runs on fresh install anyway
+    "cockpit",    # per-user Cockpit UI layouts, widget profiles, vehicle-id UUID
+})
+
+
+def _clean_bag(raw: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Remove ephemeral / per-session entries from the bag."""
+    if raw is None:
+        return None
+    return {k: v for k, v in raw.items() if k not in _BAG_EXCLUDE_KEYS}
+
+
+def extract_config(client: BlueOSClient) -> dict[str, Any]:
+    """Fetch provisionable configuration from a BlueOS device.
+
+    Only captures fields that are meaningful for fleet provisioning
+    (identity, extensions, network addresses, bag settings for extensions).
+    Runtime state (version, board, firmware, services, routes) is excluded.
     """
     config: dict[str, Any] = {}
 
@@ -84,32 +114,18 @@ def extract_config(client: BlueOSClient) -> dict[str, Any]:
     config["hostname"] = client.get_hostname()
     config["vehicle_name"] = client.get_vehicle_name()
 
-    # BlueOS version
-    config["blueos_version"] = client.get_version()
-
-    # Autopilot
-    config["board"] = client.get_board()
-    config["firmware"] = client.get_firmware_info()
-    config["serials"] = client.get_serials()
-
-    # Extensions
+    # Extensions (which are installed and their versions)
     config["extensions"] = client.get_extensions()
 
-    # Config store (extensions persist their settings here)
-    config["bag"] = client.get_bag()
+    # Config store — extension settings, minus ephemeral UI state
+    config["bag"] = _clean_bag(client.get_bag())
 
-    # Networking
+    # Networking — static IP addresses only, no ephemeral routes
     config["network"] = {
-        "ethernet": client.get_ethernet(),
+        "ethernet": _clean_ethernet(client.get_ethernet()),
         "wifi_saved": client.get_wifi_saved(),
         "hotspot": client.get_hotspot(),
     }
-
-    # Services
-    config["services"] = client.get_web_services()
-
-    # Metadata
-    config["_extracted_at"] = datetime.now(timezone.utc).isoformat()
 
     return config
 

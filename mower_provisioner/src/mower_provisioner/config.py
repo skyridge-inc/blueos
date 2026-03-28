@@ -109,6 +109,19 @@ CALIBRATION_PARAMS: frozenset[str] = frozenset(
         "RC8_TRIM",
         # System identity
         "SYSID_THISMAV",
+        # Runtime statistics (change every boot / flight)
+        "STAT_BOOTCNT",
+        "STAT_FLTTIME",
+        "STAT_RUNTIME",
+        "STAT_RESET",
+        # Barometer ground pressure (recalculated on each boot)
+        "BARO1_GND_PRESS",
+        "BARO2_GND_PRESS",
+        "BARO3_GND_PRESS",
+        # Gyro calibration temperatures (vary with ambient temp)
+        "INS_GYR1_CALTEMP",
+        "INS_GYR2_CALTEMP",
+        "INS_GYR3_CALTEMP",
     }
 )
 

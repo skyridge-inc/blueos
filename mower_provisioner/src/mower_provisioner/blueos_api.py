@@ -110,22 +110,6 @@ class BlueOSClient:
     def get_vehicle_name(self) -> str | None:
         return self._get_json("/beacon/v1.0/vehicle_name")
 
-    # -- BlueOS version --
-
-    def get_version(self) -> dict[str, Any] | None:
-        return self._get_json("/version-chooser/v1.0/version/current")
-
-    # -- Autopilot --
-
-    def get_board(self) -> dict[str, Any] | None:
-        return self._get_json("/ardupilot-manager/v1.0/board")
-
-    def get_firmware_info(self) -> dict[str, Any] | None:
-        return self._get_json("/ardupilot-manager/v1.0/firmware_info")
-
-    def get_serials(self) -> list[Any] | None:
-        return self._get_json("/ardupilot-manager/v1.0/serials")
-
     # -- Extensions (Kraken v2) --
 
     def get_extensions(self) -> list[Any] | None:
@@ -147,18 +131,22 @@ class BlueOSClient:
     def get_hotspot(self) -> Any | None:
         return self._get_json("/wifi-manager/v1.0/hotspot")
 
-    # -- System --
+    # -- Network (Cable Guy) --
 
-    def get_web_services(self) -> list[Any] | None:
-        return self._get_json("/helper/v1.0/web_services")
+    def add_ip(self, interface_name: str, ip_address: str) -> bool:
+        """Add a static (unmanaged) IP address to an interface."""
+        return self._post(
+            "/cable-guy/v1.0/address",
+            params={"interface_name": interface_name, "ip_address": ip_address},
+        )
 
     # -- Setters --
 
     def set_hostname(self, name: str) -> bool:
-        return self._post("/beacon/v1.0/hostname", json=name)
+        return self._post("/beacon/v1.0/hostname", params={"hostname": name})
 
     def set_vehicle_name(self, name: str) -> bool:
-        return self._post("/beacon/v1.0/vehicle_name", json=name)
+        return self._post("/beacon/v1.0/vehicle_name", params={"name": name})
 
     def set_bag(self, key: str, value: Any) -> bool:
         return self._post(f"/bag/v1.0/set/{key}", json=value)

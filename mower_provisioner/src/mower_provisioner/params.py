@@ -146,15 +146,24 @@ def write_params(
                 value,
                 mavutil.mavlink.MAV_PARAM_TYPE_REAL32,
             )
-            # Wait for acknowledgement
-            ack = conn.recv_match(type="PARAM_VALUE", blocking=True, timeout=5.0)
-            if ack is not None:
+            # Wait for matching ack, draining unrelated PARAM_VALUE messages
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                remaining = deadline - time.monotonic()
+                ack = conn.recv_match(
+                    type="PARAM_VALUE", blocking=True,
+                    timeout=max(remaining, 0.1),
+                )
+                if ack is None:
+                    break
                 ack_name = ack.param_id
                 if isinstance(ack_name, bytes):
                     ack_name = ack_name.decode("utf-8").rstrip("\x00")
                 if ack_name == name:
                     success = True
                     break
+            if success:
+                break
 
         if not success:
             raise ParameterWriteError(

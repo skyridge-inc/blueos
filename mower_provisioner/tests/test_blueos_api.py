@@ -34,11 +34,11 @@ class TestGetJson:
         respx.get(f"{BASE_URL}/beacon/v1.0/hostname").mock(
             return_value=httpx.Response(200, json="blueos")
         )
-        respx.get(f"{BASE_URL}/ardupilot-manager/v1.0/board").mock(
+        respx.get(f"{BASE_URL}/kraken/v2.0/extension/").mock(
             return_value=httpx.Response(500)
         )
         client.get_hostname()  # establish connection
-        assert client.get_board() is None
+        assert client.get_extensions() is None
 
     @respx.mock
     def test_connection_error_raises_on_first_call(self, client):
@@ -53,11 +53,11 @@ class TestGetJson:
         respx.get(f"{BASE_URL}/beacon/v1.0/hostname").mock(
             return_value=httpx.Response(200, json="blueos")
         )
-        respx.get(f"{BASE_URL}/ardupilot-manager/v1.0/board").mock(
+        respx.get(f"{BASE_URL}/kraken/v2.0/extension/").mock(
             side_effect=httpx.ConnectError("refused")
         )
         client.get_hostname()  # establish connection
-        assert client.get_board() is None
+        assert client.get_extensions() is None
 
     @respx.mock
     def test_404_returns_none(self, client):
@@ -88,18 +88,6 @@ class TestEndpointPaths:
     def test_get_vehicle_name(self, client):
         self._call_and_check(client, "get_vehicle_name", "/beacon/v1.0/vehicle_name")
 
-    def test_get_version(self, client):
-        self._call_and_check(client, "get_version", "/version-chooser/v1.0/version/current")
-
-    def test_get_board(self, client):
-        self._call_and_check(client, "get_board", "/ardupilot-manager/v1.0/board")
-
-    def test_get_firmware_info(self, client):
-        self._call_and_check(client, "get_firmware_info", "/ardupilot-manager/v1.0/firmware_info")
-
-    def test_get_serials(self, client):
-        self._call_and_check(client, "get_serials", "/ardupilot-manager/v1.0/serials")
-
     def test_get_extensions(self, client):
         self._call_and_check(client, "get_extensions", "/kraken/v2.0/extension/")
 
@@ -114,9 +102,6 @@ class TestEndpointPaths:
 
     def test_get_hotspot(self, client):
         self._call_and_check(client, "get_hotspot", "/wifi-manager/v1.0/hotspot")
-
-    def test_get_web_services(self, client):
-        self._call_and_check(client, "get_web_services", "/helper/v1.0/web_services")
 
 
 class TestSetters:

@@ -11,6 +11,7 @@ import yaml
 from mower_provisioner.exceptions import ParamFileError
 from mower_provisioner.extract import (
     MEDIAMTX_CONFIG_CANDIDATES,
+    _BAG_EXCLUDE_KEYS,
     extract_config,
     extract_hostname_from_url,
     fetch_mediamtx_config,
@@ -53,18 +54,16 @@ class TestExtractConfig:
         defaults = {
             "get_hostname": "blueos",
             "get_vehicle_name": "Mower-01",
-            "get_version": {"tag": "1.5.0"},
-            "get_board": {"name": "Pixhawk6X"},
-            "get_firmware_info": {"version": "4.5.1", "type": "ArduRover"},
-            "get_serials": [{"port": "/dev/ttyACM0"}],
             "get_extensions": [
                 {"identifier": "ext.example", "tag": "1.0.0", "enabled": True}
             ],
-            "get_bag": {"key1": "value1"},
-            "get_ethernet": [{"name": "eth0"}],
+            "get_bag": {"major_tom": {"token": "abc"}, "settings": {"is_dark_theme": True}},
+            "get_ethernet": [
+                {"name": "eth0", "addresses": [{"ip": "192.168.1.100"}],
+                 "routes": [{"destination": "0.0.0.0/0"}], "info": {"connected": True}},
+            ],
             "get_wifi_saved": [],
             "get_hotspot": {"enabled": False},
-            "get_web_services": [{"name": "kraken"}],
         }
         defaults.update(overrides)
         for method, value in defaults.items():
@@ -77,44 +76,65 @@ class TestExtractConfig:
 
         assert config["hostname"] == "blueos"
         assert config["vehicle_name"] == "Mower-01"
-        assert config["blueos_version"] == {"tag": "1.5.0"}
-        assert config["board"] == {"name": "Pixhawk6X"}
-        assert config["firmware"] == {"version": "4.5.1", "type": "ArduRover"}
-        assert config["serials"] == [{"port": "/dev/ttyACM0"}]
         assert len(config["extensions"]) == 1
         assert config["extensions"][0]["identifier"] == "ext.example"
-        assert config["bag"] == {"key1": "value1"}
-        assert config["network"]["ethernet"] == [{"name": "eth0"}]
-        assert config["services"] == [{"name": "kraken"}]
-        assert "_extracted_at" in config
+        # bag should have major_tom but not settings (ephemeral)
+        assert "major_tom" in config["bag"]
+        assert "settings" not in config["bag"]
+        # ethernet should have addresses but no routes
+        assert config["network"]["ethernet"][0]["name"] == "eth0"
+        assert "addresses" in config["network"]["ethernet"][0]
+        assert "routes" not in config["network"]["ethernet"][0]
+        assert "info" not in config["network"]["ethernet"][0]
+
+    def test_excludes_runtime_state(self):
+        """Config should not contain runtime-state fields."""
+        client = self._make_client()
+        config = extract_config(client)
+
+        for key in ("blueos_version", "board", "firmware", "serials", "services", "_extracted_at"):
+            assert key not in config
 
     def test_partial_failure(self):
         client = self._make_client(
-            get_board=None,
-            get_firmware_info=None,
             get_wifi_saved=None,
         )
         config = extract_config(client)
 
         assert config["hostname"] == "blueos"
-        assert config["board"] is None
-        assert config["firmware"] is None
         assert config["extensions"] is not None
         assert config["network"]["wifi_saved"] is None
 
     def test_all_fail(self):
         client = self._make_client(
             **{m: None for m in [
-                "get_hostname", "get_vehicle_name", "get_version",
-                "get_board", "get_firmware_info", "get_serials",
+                "get_hostname", "get_vehicle_name",
                 "get_extensions", "get_bag", "get_ethernet",
-                "get_wifi_saved", "get_hotspot", "get_web_services",
+                "get_wifi_saved", "get_hotspot",
             ]}
         )
         config = extract_config(client)
         assert config["hostname"] is None
         assert config["extensions"] is None
-        assert "_extracted_at" in config
+
+    def test_bag_filtering(self):
+        client = self._make_client(
+            get_bag={
+                "settings": {"is_dark_theme": True},
+                "wizard": {"version": 4},
+                "cockpit": {"cockpit-vehicle-id": "uuid"},
+                "major_tom": {"token": "abc"},
+                "vehicle.image_path": {"url": None},
+            }
+        )
+        config = extract_config(client)
+        bag = config["bag"]
+        # Excluded keys
+        for k in _BAG_EXCLUDE_KEYS:
+            assert k not in bag
+        # Kept keys
+        assert "major_tom" in bag
+        assert "vehicle.image_path" in bag
 
 
 class TestSaveYaml:
