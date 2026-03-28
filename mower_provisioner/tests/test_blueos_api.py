@@ -119,6 +119,65 @@ class TestEndpointPaths:
         self._call_and_check(client, "get_web_services", "/helper/v1.0/web_services")
 
 
+class TestSetters:
+    """Verify setter methods POST to correct endpoints."""
+
+    @respx.mock
+    def test_set_hostname(self, client):
+        route = respx.post(f"{BASE_URL}/beacon/v1.0/hostname").mock(
+            return_value=httpx.Response(200)
+        )
+        assert client.set_hostname("mower-01") is True
+        assert route.called
+
+    @respx.mock
+    def test_set_vehicle_name(self, client):
+        route = respx.post(f"{BASE_URL}/beacon/v1.0/vehicle_name").mock(
+            return_value=httpx.Response(200)
+        )
+        assert client.set_vehicle_name("Mower-01") is True
+        assert route.called
+
+    @respx.mock
+    def test_set_bag(self, client):
+        route = respx.post(f"{BASE_URL}/bag/v1.0/set/my_key").mock(
+            return_value=httpx.Response(200)
+        )
+        assert client.set_bag("my_key", {"data": 1}) is True
+        assert route.called
+
+    @respx.mock
+    def test_set_hostname_failure(self, client):
+        # Establish connection first
+        respx.get(f"{BASE_URL}/beacon/v1.0/hostname").mock(
+            return_value=httpx.Response(200, json="blueos")
+        )
+        client.get_hostname()
+        respx.post(f"{BASE_URL}/beacon/v1.0/hostname").mock(
+            return_value=httpx.Response(500)
+        )
+        assert client.set_hostname("mower-01") is False
+
+    @respx.mock
+    def test_set_connection_error_raises_on_first_call(self, client):
+        respx.post(f"{BASE_URL}/beacon/v1.0/hostname").mock(
+            side_effect=httpx.ConnectError("refused")
+        )
+        with pytest.raises(BlueOSConnectionError, match="Cannot reach"):
+            client.set_hostname("mower-01")
+
+    @respx.mock
+    def test_set_connection_error_returns_false_after_connected(self, client):
+        respx.get(f"{BASE_URL}/beacon/v1.0/hostname").mock(
+            return_value=httpx.Response(200, json="blueos")
+        )
+        client.get_hostname()
+        respx.post(f"{BASE_URL}/beacon/v1.0/vehicle_name").mock(
+            side_effect=httpx.ConnectError("refused")
+        )
+        assert client.set_vehicle_name("test") is False
+
+
 class TestContextManager:
     def test_context_manager(self):
         with BlueOSClient(BASE_URL) as client:

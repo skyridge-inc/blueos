@@ -50,6 +50,22 @@ class BlueOSClient:
         except (httpx.HTTPStatusError, httpx.HTTPError, ValueError):
             return None
 
+    def _post(self, path: str, **kwargs: Any) -> bool:
+        """POST to an endpoint. Returns True on success, False on failure."""
+        try:
+            resp = self._client.post(path, **kwargs)
+            resp.raise_for_status()
+            self._connected = True
+            return True
+        except httpx.ConnectError as e:
+            if not self._connected:
+                raise BlueOSConnectionError(
+                    f"Cannot reach {self._base_url}: {e}"
+                ) from e
+            return False
+        except (httpx.HTTPStatusError, httpx.HTTPError):
+            return False
+
     # -- Identity --
 
     def get_hostname(self) -> str | None:
@@ -99,3 +115,14 @@ class BlueOSClient:
 
     def get_web_services(self) -> list[Any] | None:
         return self._get_json("/helper/v1.0/web_services")
+
+    # -- Setters --
+
+    def set_hostname(self, name: str) -> bool:
+        return self._post("/beacon/v1.0/hostname", json=name)
+
+    def set_vehicle_name(self, name: str) -> bool:
+        return self._post("/beacon/v1.0/vehicle_name", json=name)
+
+    def set_bag(self, key: str, value: Any) -> bool:
+        return self._post(f"/bag/v1.0/set/{key}", json=value)

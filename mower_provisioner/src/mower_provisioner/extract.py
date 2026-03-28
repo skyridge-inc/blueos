@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 import yaml
 
 from .blueos_api import BlueOSClient
+from .exceptions import ParamFileError
 
 
 def extract_hostname_from_url(url: str) -> str:
@@ -64,6 +65,25 @@ def extract_config(client: BlueOSClient) -> dict[str, Any]:
     config["_extracted_at"] = datetime.now(timezone.utc).isoformat()
 
     return config
+
+
+def load_yaml(path: Path) -> dict[str, Any]:
+    """Read and parse a YAML config file.
+
+    Raises:
+        ParamFileError: If the file cannot be read or parsed.
+    """
+    try:
+        text = path.read_text()
+    except OSError as e:
+        raise ParamFileError(f"Cannot read {path}: {e}") from e
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as e:
+        raise ParamFileError(f"Invalid YAML in {path}: {e}") from e
+    if not isinstance(data, dict):
+        raise ParamFileError(f"Expected a YAML mapping in {path}, got {type(data).__name__}")
+    return data
 
 
 def save_yaml(config: dict[str, Any], path: Path) -> None:

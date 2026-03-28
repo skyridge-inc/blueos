@@ -8,9 +8,11 @@ from unittest.mock import MagicMock
 import pytest
 import yaml
 
+from mower_provisioner.exceptions import ParamFileError
 from mower_provisioner.extract import (
     extract_config,
     extract_hostname_from_url,
+    load_yaml,
     output_filename,
     save_yaml,
 )
@@ -143,3 +145,36 @@ class TestSaveYaml:
         loaded = yaml.safe_load(path.read_text())
         assert loaded["board"] is None
         assert loaded["extensions"] is None
+
+
+class TestLoadYaml:
+    def test_valid_yaml(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        path.write_text("hostname: blueos\nautopilot_params:\n  CRUISE_SPEED: 2.0\n")
+        data = load_yaml(path)
+        assert data["hostname"] == "blueos"
+        assert data["autopilot_params"]["CRUISE_SPEED"] == 2.0
+
+    def test_missing_file(self, tmp_path):
+        path = tmp_path / "nope.yaml"
+        with pytest.raises(ParamFileError, match="Cannot read"):
+            load_yaml(path)
+
+    def test_invalid_yaml(self, tmp_path):
+        path = tmp_path / "bad.yaml"
+        path.write_text(":\n  - :\n  invalid: [unterminated")
+        with pytest.raises(ParamFileError, match="Invalid YAML"):
+            load_yaml(path)
+
+    def test_non_dict_yaml(self, tmp_path):
+        path = tmp_path / "list.yaml"
+        path.write_text("- item1\n- item2\n")
+        with pytest.raises(ParamFileError, match="Expected a YAML mapping"):
+            load_yaml(path)
+
+    def test_round_trip_with_save_yaml(self, tmp_path):
+        path = tmp_path / "rt.yaml"
+        config = {"hostname": "blueos", "autopilot_params": {"WP_RADIUS": 3.0}}
+        save_yaml(config, path)
+        loaded = load_yaml(path)
+        assert loaded == config

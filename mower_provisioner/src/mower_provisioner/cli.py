@@ -13,7 +13,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskPr
 from rich.table import Table
 
 from . import __version__
-from .config import load_param_file, save_param_file
+from .config import CALIBRATION_PARAMS, load_param_file, save_param_file
 from .connection import get_vehicle_type_name, mavlink_connection
 from .params import diff_params, fetch_all_params, write_params
 
@@ -370,3 +370,202 @@ def extract_config_cmd(
     nulls = [k for k, v in config.items() if v is None and not k.startswith("_")]
     if nulls:
         err_console.print(f"[yellow]Warning: Could not reach: {', '.join(nulls)}[/yellow]")
+
+
+MAVLINK_PORT = 5760
+
+
+@app.command()
+def download(
+    host: Annotated[
+        str,
+        typer.Argument(help="BlueOS IP or hostname (e.g., 192.168.2.2 or blueos.local)."),
+    ],
+    output: Annotated[
+        Optional[Path],
+        typer.Option("--output", "-o", help="Output YAML file path. Default: <host>.yaml"),
+    ] = None,
+    include_calibration: CalibrationOption = False,
+    timeout: Annotated[
+        float,
+        typer.Option("--timeout", "-t", help="HTTP request timeout in seconds."),
+    ] = 10.0,
+) -> None:
+    """Download BlueOS configuration and autopilot parameters to YAML."""
+    import httpx as _httpx
+
+    from .blueos_api import BlueOSClient
+    from .exceptions import BlueOSConnectionError
+    from .extract import extract_config, save_yaml
+
+    url = f"http://{host}" if not host.startswith("http") else host
+    out_path = output or Path(f"{host}.yaml")
+
+    # 1. Fetch BlueOS configuration over HTTP
+    with BlueOSClient(url, timeout=_httpx.Timeout(timeout, read=timeout * 3)) as client:
+        try:
+            with console.status("Downloading BlueOS configuration..."):
+                config = extract_config(client)
+        except BlueOSConnectionError as e:
+            err_console.print(f"[red]{e}[/red]")
+            raise typer.Exit(1)
+
+    # 2. Fetch autopilot parameters over MAVLink TCP
+    mavlink_device = f"tcp:{host}:{MAVLINK_PORT}"
+    with mavlink_connection(mavlink_device) as conn:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Downloading autopilot parameters...", total=None)
+
+            def on_progress(received: int, total: int) -> None:
+                progress.update(task, completed=received, total=total)
+
+            params = fetch_all_params(conn, progress_callback=on_progress)
+
+    # 3. Filter calibration params and add to config
+    if not include_calibration:
+        params = {k: v for k, v in params.items() if k not in CALIBRATION_PARAMS}
+    config["autopilot_params"] = dict(sorted(params.items()))
+
+    # 4. Save
+    save_yaml(config, out_path)
+
+    ext_count = len(config.get("extensions") or [])
+    console.print(f"[green]Downloaded to {out_path}[/green]")
+    console.print(f"  BlueOS extensions: {ext_count}")
+    console.print(f"  Autopilot parameters: {len(params)}")
+    nulls = [k for k, v in config.items()
+             if v is None and not k.startswith("_") and k != "autopilot_params"]
+    if nulls:
+        err_console.print(f"[yellow]Warning: Could not reach: {', '.join(nulls)}[/yellow]")
+
+
+@app.command()
+def upload(
+    host: Annotated[
+        str,
+        typer.Argument(help="BlueOS IP or hostname (e.g., 192.168.2.2 or blueos.local)."),
+    ],
+    config_file: Annotated[
+        Path,
+        typer.Argument(help="Path to YAML configuration file."),
+    ],
+    include_calibration: CalibrationOption = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Show what would be uploaded without making changes."),
+    ] = False,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", "-y", help="Skip confirmation prompt."),
+    ] = False,
+    timeout: Annotated[
+        float,
+        typer.Option("--timeout", "-t", help="HTTP request timeout in seconds."),
+    ] = 10.0,
+) -> None:
+    """Upload configuration and autopilot parameters from YAML to BlueOS device."""
+    import httpx as _httpx
+
+    from .blueos_api import BlueOSClient
+    from .exceptions import BlueOSConnectionError
+    from .extract import load_yaml
+
+    config = load_yaml(config_file)
+
+    # Summarize what will be uploaded
+    changes: list[str] = []
+    if config.get("hostname") is not None:
+        changes.append(f"  Hostname: {config['hostname']}")
+    if config.get("vehicle_name") is not None:
+        changes.append(f"  Vehicle name: {config['vehicle_name']}")
+    bag = config.get("bag")
+    if bag and isinstance(bag, dict):
+        changes.append(f"  Bag entries: {len(bag)}")
+    params = config.get("autopilot_params")
+    if params and isinstance(params, dict):
+        if not include_calibration:
+            params = {k: v for k, v in params.items() if k not in CALIBRATION_PARAMS}
+        changes.append(f"  Autopilot parameters: {len(params)}")
+
+    if not changes:
+        console.print("[yellow]Nothing to upload — YAML has no writable sections.[/yellow]")
+        return
+
+    console.print(f"[bold]Upload to {host}:[/bold]")
+    for line in changes:
+        console.print(line)
+
+    if dry_run:
+        console.print("[yellow]DRY RUN — no changes will be made.[/yellow]")
+        if params:
+            console.print("\n[bold]Parameters:[/bold]")
+            for name in sorted(params):
+                console.print(f"  {name} = {params[name]}")
+        return
+
+    if not yes:
+        typer.confirm(f"Upload to {host}?", abort=True)
+
+    url = f"http://{host}" if not host.startswith("http") else host
+    uploaded: list[str] = []
+
+    # 1. Push BlueOS config over HTTP
+    with BlueOSClient(url, timeout=_httpx.Timeout(timeout, read=timeout * 3)) as client:
+        try:
+            with console.status("Uploading BlueOS configuration..."):
+                if config.get("hostname") is not None:
+                    if client.set_hostname(config["hostname"]):
+                        uploaded.append("hostname")
+                    else:
+                        err_console.print("[yellow]Warning: Failed to set hostname[/yellow]")
+
+                if config.get("vehicle_name") is not None:
+                    if client.set_vehicle_name(config["vehicle_name"]):
+                        uploaded.append("vehicle_name")
+                    else:
+                        err_console.print("[yellow]Warning: Failed to set vehicle name[/yellow]")
+
+                if bag and isinstance(bag, dict):
+                    bag_ok = 0
+                    for key, value in bag.items():
+                        if client.set_bag(key, value):
+                            bag_ok += 1
+                        else:
+                            err_console.print(f"[yellow]Warning: Failed to set bag/{key}[/yellow]")
+                    if bag_ok:
+                        uploaded.append(f"bag ({bag_ok} entries)")
+        except BlueOSConnectionError as e:
+            err_console.print(f"[red]{e}[/red]")
+            raise typer.Exit(1)
+
+    # 2. Write autopilot parameters over MAVLink TCP
+    if params:
+        mavlink_device = f"tcp:{host}:{MAVLINK_PORT}"
+        with mavlink_connection(mavlink_device) as conn:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task("Uploading autopilot parameters...", total=len(params))
+
+                def on_progress(written: int, total: int) -> None:
+                    progress.update(task, completed=written)
+
+                written = write_params(
+                    conn,
+                    params,
+                    include_calibration=True,  # already filtered above
+                    progress_callback=on_progress,
+                )
+        uploaded.append(f"autopilot params ({len(written)})")
+
+    console.print(f"[green]Upload complete: {', '.join(uploaded)}[/green]")
