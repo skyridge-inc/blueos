@@ -41,6 +41,9 @@ def _mock_blueos_client():
     client.get_wifi_saved.return_value = []
     client.get_hotspot.return_value = None
     client.get_web_services.return_value = []
+    # file browser — default: MediaMTX config found at first candidate
+    client.get_file.return_value = "logLevel: info\nrtspAddress: ':8555'\n"
+    client.put_file.return_value = True
     # setters
     client.set_hostname.return_value = True
     client.set_vehicle_name.return_value = True
@@ -145,6 +148,41 @@ class TestDownload:
         data = yaml.safe_load(out.read_text())
         keys = list(data["autopilot_params"].keys())
         assert keys == sorted(keys)
+
+    @patch("mower_provisioner.cli.mavlink_connection")
+    @patch("mower_provisioner.blueos_api.BlueOSClient")
+    def test_download_includes_mediamtx(self, mock_cls, mock_mavlink, tmp_path):
+        mock_cls.return_value = _mock_blueos_client()
+        mock_mavlink.return_value = _mock_mavlink_conn([
+            _make_param_msg("CRUISE_SPEED", 2.0, 0, 1),
+        ])
+
+        out = tmp_path / "test.yaml"
+        result = runner.invoke(app, ["download", "192.168.2.2", "-o", str(out)])
+        assert result.exit_code == 0, result.output
+
+        data = yaml.safe_load(out.read_text())
+        assert data["mediamtx"] is not None
+        assert "config_path" in data["mediamtx"]
+        assert data["mediamtx"]["config"]["logLevel"] == "info"
+
+    @patch("mower_provisioner.cli.mavlink_connection")
+    @patch("mower_provisioner.blueos_api.BlueOSClient")
+    def test_download_mediamtx_not_found(self, mock_cls, mock_mavlink, tmp_path):
+        mock_client = _mock_blueos_client()
+        mock_client.get_file.return_value = None  # MediaMTX not found
+        mock_cls.return_value = mock_client
+        mock_mavlink.return_value = _mock_mavlink_conn([
+            _make_param_msg("CRUISE_SPEED", 2.0, 0, 1),
+        ])
+
+        out = tmp_path / "test.yaml"
+        result = runner.invoke(app, ["download", "192.168.2.2", "-o", str(out)])
+        assert result.exit_code == 0, result.output
+
+        data = yaml.safe_load(out.read_text())
+        assert data["mediamtx"] is None
+        assert "not found" in result.output
 
 
 class TestUpload:
@@ -269,3 +307,66 @@ class TestUpload:
         result = runner.invoke(app, ["upload", "192.168.2.2", str(cfg), "-y"])
         assert result.exit_code == 0, result.output
         assert mock_client.set_bag.call_count == 2
+
+    @patch("mower_provisioner.cli.write_params", return_value=["CRUISE_SPEED"])
+    @patch("mower_provisioner.cli.mavlink_connection")
+    @patch("mower_provisioner.blueos_api.BlueOSClient")
+    def test_upload_mediamtx_config(self, mock_cls, mock_mavlink, mock_write, tmp_path):
+        mock_client = _mock_blueos_client()
+        mock_cls.return_value = mock_client
+
+        mock_conn = MagicMock()
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        mock_mavlink.return_value = mock_conn
+
+        cfg = tmp_path / "config.yaml"
+        config = {
+            "hostname": "mower-01",
+            "vehicle_name": "Mower-01",
+            "bag": {"key1": "value1"},
+            "mediamtx": {
+                "config_path": "/etc/mediamtx/mediamtx.yml",
+                "config": {"logLevel": "info", "rtspAddress": ":8555"},
+            },
+            "autopilot_params": {"CRUISE_SPEED": 2.0},
+        }
+        cfg.write_text(yaml.dump(config))
+
+        result = runner.invoke(app, ["upload", "192.168.2.2", str(cfg), "-y"])
+        assert result.exit_code == 0, result.output
+        assert "mediamtx config" in result.output
+
+        mock_client.put_file.assert_called_once()
+        call_path = mock_client.put_file.call_args[0][0]
+        assert call_path == "/etc/mediamtx/mediamtx.yml"
+
+    @patch("mower_provisioner.cli.write_params", return_value=["CRUISE_SPEED"])
+    @patch("mower_provisioner.cli.mavlink_connection")
+    @patch("mower_provisioner.blueos_api.BlueOSClient")
+    def test_upload_mediamtx_failure_warns(self, mock_cls, mock_mavlink, mock_write, tmp_path):
+        mock_client = _mock_blueos_client()
+        mock_client.put_file.return_value = False
+        mock_cls.return_value = mock_client
+
+        mock_conn = MagicMock()
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        mock_mavlink.return_value = mock_conn
+
+        cfg = tmp_path / "config.yaml"
+        config = {
+            "hostname": "mower-01",
+            "vehicle_name": "Mower-01",
+            "bag": {"key1": "value1"},
+            "mediamtx": {
+                "config_path": "/etc/mediamtx/mediamtx.yml",
+                "config": {"logLevel": "info"},
+            },
+            "autopilot_params": {"CRUISE_SPEED": 2.0},
+        }
+        cfg.write_text(yaml.dump(config))
+
+        result = runner.invoke(app, ["upload", "192.168.2.2", str(cfg), "-y"])
+        assert result.exit_code == 0, result.output
+        assert "Failed to push MediaMTX config" in result.output

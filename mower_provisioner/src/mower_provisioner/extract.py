@@ -13,6 +13,53 @@ from .blueos_api import BlueOSClient
 from .exceptions import ParamFileError
 
 
+# Candidate paths for MediaMTX config via the BlueOS file browser API.
+# Paths are relative to the file browser root scope (typically /usr/blueos/userdata/).
+# Tried in order; first successful read wins.
+MEDIAMTX_CONFIG_CANDIDATES = [
+    "extensions/mediamtx/mediamtx.yml",
+]
+
+
+def fetch_mediamtx_config(
+    client: BlueOSClient,
+    config_path: str | None = None,
+) -> dict[str, Any] | None:
+    """Fetch and parse the MediaMTX YAML config from a BlueOS device.
+
+    Tries the given config_path first, then falls back to candidate paths.
+    Returns a dict with 'config_path' and 'config' keys, or None if not found.
+    """
+    paths_to_try = [config_path] if config_path else MEDIAMTX_CONFIG_CANDIDATES
+
+    for path in paths_to_try:
+        raw = client.get_file(path)
+        if raw is not None:
+            try:
+                parsed = yaml.safe_load(raw)
+            except yaml.YAMLError:
+                continue
+            if isinstance(parsed, dict):
+                return {"config_path": path, "config": parsed}
+    return None
+
+
+def push_mediamtx_config(
+    client: BlueOSClient,
+    mediamtx: dict[str, Any],
+) -> bool:
+    """Serialize and push MediaMTX config back to the device.
+
+    Expects a dict with 'config_path' (str) and 'config' (dict) keys.
+    """
+    config_path = mediamtx.get("config_path")
+    config = mediamtx.get("config")
+    if not config_path or not isinstance(config, dict):
+        return False
+    content = yaml.dump(config, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    return client.put_file(config_path, content)
+
+
 def extract_hostname_from_url(url: str) -> str:
     """Extract domain/host from URL for use as filename."""
     parsed = urlparse(url)

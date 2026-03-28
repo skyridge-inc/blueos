@@ -34,6 +34,42 @@ class BlueOSClient:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
+    def _get_text(self, path: str) -> str | None:
+        """GET an endpoint and return response text, or None on failure."""
+        try:
+            resp = self._client.get(path)
+            resp.raise_for_status()
+            self._connected = True
+            return resp.text
+        except httpx.ConnectError as e:
+            if not self._connected:
+                raise BlueOSConnectionError(
+                    f"Cannot reach {self._base_url}: {e}"
+                ) from e
+            return None
+        except (httpx.HTTPStatusError, httpx.HTTPError):
+            return None
+
+    def _put_text(self, path: str, content: str) -> bool:
+        """PUT text content to an endpoint. Returns True on success."""
+        try:
+            resp = self._client.put(
+                path,
+                content=content.encode("utf-8"),
+                headers={"Content-Type": "text/plain"},
+            )
+            resp.raise_for_status()
+            self._connected = True
+            return True
+        except httpx.ConnectError as e:
+            if not self._connected:
+                raise BlueOSConnectionError(
+                    f"Cannot reach {self._base_url}: {e}"
+                ) from e
+            return False
+        except (httpx.HTTPStatusError, httpx.HTTPError):
+            return False
+
     def _get_json(self, path: str) -> Any | None:
         """GET an endpoint and return parsed JSON, or None on failure."""
         try:
@@ -126,3 +162,63 @@ class BlueOSClient:
 
     def set_bag(self, key: str, value: Any) -> bool:
         return self._post(f"/bag/v1.0/set/{key}", json=value)
+
+    # -- File browser (filebrowser.org API, requires auth) --
+
+    _fb_token: str | None = None
+
+    def _fb_auth(self) -> str | None:
+        """Login to the file browser and cache the JWT token."""
+        if self._fb_token is not None:
+            return self._fb_token
+        try:
+            resp = self._client.post(
+                "/file-browser/api/login",
+                json={"username": "admin", "password": "admin"},
+            )
+            resp.raise_for_status()
+            self._connected = True
+            self._fb_token = resp.text.strip().strip('"')
+            return self._fb_token
+        except (httpx.ConnectError, httpx.HTTPStatusError, httpx.HTTPError):
+            return None
+
+    def get_file(self, device_path: str) -> str | None:
+        """Fetch a file from the device via the file browser API.
+
+        device_path is relative to the file browser root scope
+        (e.g. "extensions/mediamtx/mediamtx.yml").
+        """
+        token = self._fb_auth()
+        if token is None:
+            return None
+        path = device_path.lstrip("/")
+        try:
+            resp = self._client.get(
+                f"/file-browser/api/raw/{path}",
+                headers={"X-Auth": token},
+            )
+            resp.raise_for_status()
+            return resp.text
+        except (httpx.HTTPStatusError, httpx.HTTPError):
+            return None
+
+    def put_file(self, device_path: str, content: str) -> bool:
+        """Write a file to the device via the file browser API.
+
+        device_path is relative to the file browser root scope.
+        """
+        token = self._fb_auth()
+        if token is None:
+            return False
+        path = device_path.lstrip("/")
+        try:
+            resp = self._client.put(
+                f"/file-browser/api/resources/{path}",
+                content=content.encode("utf-8"),
+                headers={"X-Auth": token, "Content-Type": "text/plain"},
+            )
+            resp.raise_for_status()
+            return True
+        except (httpx.HTTPStatusError, httpx.HTTPError):
+            return False

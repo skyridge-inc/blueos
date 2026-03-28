@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [project.scripts]
-mower-provision = "mower_provisioner.cli:app"
+skynet = "mower_provisioner.cli:app"
 
 [build-system]
 requires = ["hatchling"]

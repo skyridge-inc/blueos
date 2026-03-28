@@ -178,6 +178,76 @@ class TestSetters:
         assert client.set_vehicle_name("test") is False
 
 
+class TestFileBrowser:
+    """Verify file browser API methods with auth."""
+
+    def _mock_login(self):
+        respx.post(f"{BASE_URL}/file-browser/api/login").mock(
+            return_value=httpx.Response(200, text='"test-jwt-token"')
+        )
+
+    @respx.mock
+    def test_get_file_success(self, client):
+        self._mock_login()
+        route = respx.get(f"{BASE_URL}/file-browser/api/raw/extensions/mediamtx/mediamtx.yml").mock(
+            return_value=httpx.Response(200, text="logLevel: info\n")
+        )
+        result = client.get_file("extensions/mediamtx/mediamtx.yml")
+        assert result == "logLevel: info\n"
+        assert route.called
+        # Verify auth header was sent
+        assert route.calls[0].request.headers["x-auth"] == "test-jwt-token"
+
+    @respx.mock
+    def test_get_file_not_found(self, client):
+        self._mock_login()
+        respx.get(f"{BASE_URL}/file-browser/api/raw/nope.yml").mock(
+            return_value=httpx.Response(404)
+        )
+        assert client.get_file("nope.yml") is None
+
+    @respx.mock
+    def test_get_file_login_failure(self, client):
+        respx.post(f"{BASE_URL}/file-browser/api/login").mock(
+            return_value=httpx.Response(403)
+        )
+        assert client.get_file("extensions/mediamtx/mediamtx.yml") is None
+
+    @respx.mock
+    def test_put_file_success(self, client):
+        self._mock_login()
+        route = respx.put(f"{BASE_URL}/file-browser/api/resources/extensions/test.yml").mock(
+            return_value=httpx.Response(200)
+        )
+        assert client.put_file("extensions/test.yml", "content") is True
+        assert route.called
+        assert route.calls[0].request.headers["x-auth"] == "test-jwt-token"
+
+    @respx.mock
+    def test_put_file_failure(self, client):
+        self._mock_login()
+        respx.put(f"{BASE_URL}/file-browser/api/resources/extensions/test.yml").mock(
+            return_value=httpx.Response(500)
+        )
+        assert client.put_file("extensions/test.yml", "content") is False
+
+    @respx.mock
+    def test_token_cached(self, client):
+        login_route = respx.post(f"{BASE_URL}/file-browser/api/login").mock(
+            return_value=httpx.Response(200, text='"cached-token"')
+        )
+        respx.get(f"{BASE_URL}/file-browser/api/raw/a.yml").mock(
+            return_value=httpx.Response(200, text="a")
+        )
+        respx.get(f"{BASE_URL}/file-browser/api/raw/b.yml").mock(
+            return_value=httpx.Response(200, text="b")
+        )
+        client.get_file("a.yml")
+        client.get_file("b.yml")
+        # Login should only have been called once
+        assert login_route.call_count == 1
+
+
 class TestContextManager:
     def test_context_manager(self):
         with BlueOSClient(BASE_URL) as client:

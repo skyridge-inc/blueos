@@ -18,7 +18,7 @@ from .connection import get_vehicle_type_name, mavlink_connection
 from .params import diff_params, fetch_all_params, write_params
 
 app = typer.Typer(
-    name="mower-provision",
+    name="skynet",
     help="MAVLink fleet provisioning CLI for ArduPilot Rover/Mower vehicles.",
     no_args_is_help=True,
 )
@@ -49,7 +49,7 @@ DEFAULT_BAUD = 115200
 
 def version_callback(value: bool) -> None:
     if value:
-        console.print(f"mower-provision {__version__}")
+        console.print(f"skynet {__version__}")
         raise typer.Exit()
 
 
@@ -395,52 +395,70 @@ def download(
     import httpx as _httpx
 
     from .blueos_api import BlueOSClient
-    from .exceptions import BlueOSConnectionError
-    from .extract import extract_config, save_yaml
+    from .exceptions import BlueOSConnectionError, MowerProvisionerError
+    from .extract import extract_config, fetch_mediamtx_config, save_yaml
 
     url = f"http://{host}" if not host.startswith("http") else host
     out_path = output or Path(f"{host}.yaml")
 
-    # 1. Fetch BlueOS configuration over HTTP
+    # 1. Fetch BlueOS configuration + MediaMTX config over HTTP
     with BlueOSClient(url, timeout=_httpx.Timeout(timeout, read=timeout * 3)) as client:
         try:
             with console.status("Downloading BlueOS configuration..."):
                 config = extract_config(client)
+            with console.status("Downloading MediaMTX configuration..."):
+                config["mediamtx"] = fetch_mediamtx_config(client)
         except BlueOSConnectionError as e:
             err_console.print(f"[red]{e}[/red]")
             raise typer.Exit(1)
 
     # 2. Fetch autopilot parameters over MAVLink TCP
+    params: dict[str, float] = {}
     mavlink_device = f"tcp:{host}:{MAVLINK_PORT}"
-    with mavlink_connection(mavlink_device) as conn:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            console=console,
-        ) as progress:
-            task = progress.add_task("Downloading autopilot parameters...", total=None)
+    try:
+        with mavlink_connection(mavlink_device) as conn:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task("Downloading autopilot parameters...", total=None)
 
-            def on_progress(received: int, total: int) -> None:
-                progress.update(task, completed=received, total=total)
+                def on_progress(received: int, total: int) -> None:
+                    progress.update(task, completed=received, total=total)
 
-            params = fetch_all_params(conn, progress_callback=on_progress)
+                params = fetch_all_params(conn, progress_callback=on_progress)
+    except MowerProvisionerError as e:
+        err_console.print(f"[yellow]Warning: Could not fetch autopilot params: {e}[/yellow]")
 
     # 3. Filter calibration params and add to config
-    if not include_calibration:
-        params = {k: v for k, v in params.items() if k not in CALIBRATION_PARAMS}
-    config["autopilot_params"] = dict(sorted(params.items()))
+    if params:
+        if not include_calibration:
+            params = {k: v for k, v in params.items() if k not in CALIBRATION_PARAMS}
+        config["autopilot_params"] = dict(sorted(params.items()))
+    else:
+        config["autopilot_params"] = None
 
     # 4. Save
     save_yaml(config, out_path)
 
     ext_count = len(config.get("extensions") or [])
+    mediamtx = config.get("mediamtx")
     console.print(f"[green]Downloaded to {out_path}[/green]")
     console.print(f"  BlueOS extensions: {ext_count}")
-    console.print(f"  Autopilot parameters: {len(params)}")
+    if params:
+        console.print(f"  Autopilot parameters: {len(params)}")
+    else:
+        err_console.print("  Autopilot parameters: [yellow]unavailable[/yellow]")
+    if mediamtx:
+        console.print(f"  MediaMTX config: {mediamtx['config_path']}")
+    else:
+        err_console.print("  MediaMTX config: [yellow]not found[/yellow]")
     nulls = [k for k, v in config.items()
-             if v is None and not k.startswith("_") and k != "autopilot_params"]
+             if v is None and not k.startswith("_")
+             and k not in ("autopilot_params", "mediamtx")]
     if nulls:
         err_console.print(f"[yellow]Warning: Could not reach: {', '.join(nulls)}[/yellow]")
 
@@ -473,8 +491,8 @@ def upload(
     import httpx as _httpx
 
     from .blueos_api import BlueOSClient
-    from .exceptions import BlueOSConnectionError
-    from .extract import load_yaml
+    from .exceptions import BlueOSConnectionError, MowerProvisionerError
+    from .extract import load_yaml, push_mediamtx_config
 
     config = load_yaml(config_file)
 
@@ -487,6 +505,9 @@ def upload(
     bag = config.get("bag")
     if bag and isinstance(bag, dict):
         changes.append(f"  Bag entries: {len(bag)}")
+    mediamtx = config.get("mediamtx")
+    if mediamtx and isinstance(mediamtx, dict) and mediamtx.get("config"):
+        changes.append(f"  MediaMTX config: {mediamtx.get('config_path', 'unknown path')}")
     params = config.get("autopilot_params")
     if params and isinstance(params, dict):
         if not include_calibration:
@@ -540,6 +561,12 @@ def upload(
                             err_console.print(f"[yellow]Warning: Failed to set bag/{key}[/yellow]")
                     if bag_ok:
                         uploaded.append(f"bag ({bag_ok} entries)")
+
+                if mediamtx and isinstance(mediamtx, dict) and mediamtx.get("config"):
+                    if push_mediamtx_config(client, mediamtx):
+                        uploaded.append("mediamtx config")
+                    else:
+                        err_console.print("[yellow]Warning: Failed to push MediaMTX config[/yellow]")
         except BlueOSConnectionError as e:
             err_console.print(f"[red]{e}[/red]")
             raise typer.Exit(1)
@@ -547,25 +574,28 @@ def upload(
     # 2. Write autopilot parameters over MAVLink TCP
     if params:
         mavlink_device = f"tcp:{host}:{MAVLINK_PORT}"
-        with mavlink_connection(mavlink_device) as conn:
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                TaskProgressColumn(),
-                console=console,
-            ) as progress:
-                task = progress.add_task("Uploading autopilot parameters...", total=len(params))
+        try:
+            with mavlink_connection(mavlink_device) as conn:
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    TaskProgressColumn(),
+                    console=console,
+                ) as progress:
+                    task = progress.add_task("Uploading autopilot parameters...", total=len(params))
 
-                def on_progress(written: int, total: int) -> None:
-                    progress.update(task, completed=written)
+                    def on_progress(written: int, total: int) -> None:
+                        progress.update(task, completed=written)
 
-                written = write_params(
-                    conn,
-                    params,
-                    include_calibration=True,  # already filtered above
-                    progress_callback=on_progress,
-                )
-        uploaded.append(f"autopilot params ({len(written)})")
+                    written = write_params(
+                        conn,
+                        params,
+                        include_calibration=True,  # already filtered above
+                        progress_callback=on_progress,
+                    )
+            uploaded.append(f"autopilot params ({len(written)})")
+        except MowerProvisionerError as e:
+            err_console.print(f"[yellow]Warning: Could not write autopilot params: {e}[/yellow]")
 
     console.print(f"[green]Upload complete: {', '.join(uploaded)}[/green]")

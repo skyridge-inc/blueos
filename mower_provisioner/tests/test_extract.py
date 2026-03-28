@@ -10,10 +10,13 @@ import yaml
 
 from mower_provisioner.exceptions import ParamFileError
 from mower_provisioner.extract import (
+    MEDIAMTX_CONFIG_CANDIDATES,
     extract_config,
     extract_hostname_from_url,
+    fetch_mediamtx_config,
     load_yaml,
     output_filename,
+    push_mediamtx_config,
     save_yaml,
 )
 
@@ -178,3 +181,103 @@ class TestLoadYaml:
         save_yaml(config, path)
         loaded = load_yaml(path)
         assert loaded == config
+
+
+class TestFetchMediamtxConfig:
+    def test_found_at_first_candidate(self):
+        client = MagicMock()
+        yaml_text = "logLevel: info\nrtspAddress: :8555\n"
+        client.get_file.side_effect = lambda p: yaml_text if p == MEDIAMTX_CONFIG_CANDIDATES[0] else None
+
+        result = fetch_mediamtx_config(client)
+        assert result is not None
+        assert result["config_path"] == MEDIAMTX_CONFIG_CANDIDATES[0]
+        assert result["config"]["logLevel"] == "info"
+
+    def test_explicit_path_overrides_candidates(self):
+        client = MagicMock()
+        client.get_file.return_value = "logLevel: debug\n"
+
+        result = fetch_mediamtx_config(client, config_path="/custom/path.yml")
+        assert result is not None
+        assert result["config_path"] == "/custom/path.yml"
+        # Should only try the explicit path, not candidates
+        client.get_file.assert_called_once_with("/custom/path.yml")
+
+    def test_not_found(self):
+        client = MagicMock()
+        client.get_file.return_value = None
+        assert fetch_mediamtx_config(client) is None
+
+    def test_explicit_path(self):
+        client = MagicMock()
+        client.get_file.return_value = "rtspAddress: :9999\n"
+        result = fetch_mediamtx_config(client, config_path="/custom/mediamtx.yml")
+        assert result is not None
+        assert result["config_path"] == "/custom/mediamtx.yml"
+        client.get_file.assert_called_once_with("/custom/mediamtx.yml")
+
+    def test_invalid_yaml_skipped(self):
+        client = MagicMock()
+        # Use explicit paths: first is invalid YAML, second is valid
+        def side_effect(path):
+            if path == "/bad/mediamtx.yml":
+                return ":\n  bad: [unterminated"
+            if path == "/good/mediamtx.yml":
+                return "logLevel: info\n"
+            return None
+        client.get_file.side_effect = side_effect
+
+        # Neither candidate path will match, so test with explicit paths
+        result = fetch_mediamtx_config(client, config_path="/bad/mediamtx.yml")
+        assert result is None  # invalid YAML at explicit path returns None
+
+        # Now test that valid path works
+        result = fetch_mediamtx_config(client, config_path="/good/mediamtx.yml")
+        assert result is not None
+        assert result["config"]["logLevel"] == "info"
+
+    def test_non_dict_yaml_skipped(self):
+        client = MagicMock()
+        # First path returns a list (not a dict), rest return None
+        def side_effect(path):
+            if path == MEDIAMTX_CONFIG_CANDIDATES[0]:
+                return "- item1\n- item2\n"
+            return None
+        client.get_file.side_effect = side_effect
+
+        assert fetch_mediamtx_config(client) is None
+
+
+class TestPushMediamtxConfig:
+    def test_push_success(self):
+        client = MagicMock()
+        client.put_file.return_value = True
+        mediamtx = {
+            "config_path": "/etc/mediamtx/mediamtx.yml",
+            "config": {"logLevel": "info", "rtspAddress": ":8555"},
+        }
+        assert push_mediamtx_config(client, mediamtx) is True
+        client.put_file.assert_called_once()
+        call_path, call_content = client.put_file.call_args[0]
+        assert call_path == "/etc/mediamtx/mediamtx.yml"
+        assert "logLevel: info" in call_content
+
+    def test_push_failure(self):
+        client = MagicMock()
+        client.put_file.return_value = False
+        mediamtx = {
+            "config_path": "/etc/mediamtx/mediamtx.yml",
+            "config": {"logLevel": "info"},
+        }
+        assert push_mediamtx_config(client, mediamtx) is False
+
+    def test_push_missing_path(self):
+        client = MagicMock()
+        assert push_mediamtx_config(client, {"config": {"a": 1}}) is False
+        client.put_file.assert_not_called()
+
+    def test_push_missing_config(self):
+        client = MagicMock()
+        assert push_mediamtx_config(client, {"config_path": "/foo"}) is False
+        client.put_file.assert_not_called()
