@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nav-planning"
+version = "0.1.0"
+description = "Waypoint mission planning for Skyridge autonomous mower fleet"
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.9",
+    "rich>=13.0",
+    "shapely>=2.0",
+]
+
+[project.scripts]
+nav-plan = "nav_planning.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nav_planning"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0",
+    "pytest-mock>=3.0",
+]
