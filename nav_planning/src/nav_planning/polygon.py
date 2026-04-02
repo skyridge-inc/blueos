@@ -3,28 +3,66 @@
 from __future__ import annotations
 
 import math
+import xml.etree.ElementTree as ET
+
+KML_NS = "http://www.opengis.net/kml/2.2"
 
 
-def parse_poly_file(path: str) -> list[tuple[float, float]]:
-    """Parse an ArduPilot .poly file into a list of (lat, lon) tuples.
+def parse_kml_file(path: str) -> list[tuple[float, float]]:
+    """Parse a KML file and extract the first polygon as (lat, lon) tuples.
 
-    Format: one space-separated `lat lon` pair per line.
-    Lines starting with # are comments. Blank lines are skipped.
+    Validates that the polygon is completely closed (first coordinate equals
+    last coordinate). The closing duplicate is stripped from the returned list
+    since the rest of the codebase treats polygons as implicitly closed.
+
+    KML coordinates are lon,lat,alt — this function swaps to lat,lon.
     """
+    tree = ET.parse(path)
+    root = tree.getroot()
+
+    # Handle KML namespace — try with namespace first, then without
+    coords_text = None
+    for ns in [f"{{{KML_NS}}}", ""]:
+        polygon = root.find(f".//{ns}Polygon")
+        if polygon is not None:
+            coords_el = polygon.find(
+                f"{ns}outerBoundaryIs/{ns}LinearRing/{ns}coordinates"
+            )
+            if coords_el is not None and coords_el.text:
+                coords_text = coords_el.text.strip()
+                break
+
+    if coords_text is None:
+        raise ValueError("No <Polygon> with coordinates found in KML file")
+
+    # Parse lon,lat,alt triples → (lat, lon) tuples
     vertices: list[tuple[float, float]] = []
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            parts = line.split()
-            if len(parts) < 2:
-                raise ValueError(f"Malformed line (expected 'lat lon'): {line!r}")
-            vertices.append((float(parts[0]), float(parts[1])))
+    for token in coords_text.split():
+        parts = token.split(",")
+        if len(parts) < 2:
+            raise ValueError(f"Malformed KML coordinate: {token!r}")
+        lon, lat = float(parts[0]), float(parts[1])
+        vertices.append((lat, lon))
+
+    if len(vertices) < 4:
+        raise ValueError(
+            f"KML polygon requires at least 3 vertices plus closing point, "
+            f"got {len(vertices)}"
+        )
+
+    # Validate closed polygon
+    first, last = vertices[0], vertices[-1]
+    if abs(first[0] - last[0]) > 1e-9 or abs(first[1] - last[1]) > 1e-9:
+        raise ValueError(
+            "KML polygon is not closed: first and last coordinates must match"
+        )
+
+    # Strip closing duplicate — codebase treats polygons as implicitly closed
+    vertices = vertices[:-1]
 
     if len(vertices) < 3:
         raise ValueError(
-            f"Polygon requires at least 3 vertices, got {len(vertices)}"
+            f"Polygon requires at least 3 unique vertices, got {len(vertices)}"
         )
     return vertices
 
@@ -77,6 +115,44 @@ def to_latlon(
         lon = lon0 + x / meters_per_deg_lon
         result.append((lat, lon))
     return result
+
+
+def extract_spine(vertices_xy: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Extract a spine polyline by walking vertices until a turn of >= 90 degrees.
+
+    Starts at vertex 0 and follows subsequent vertices. At each vertex, the
+    absolute turn angle between the incoming and outgoing edges is computed.
+    The spine ends at the first vertex where the turn is >= 90 degrees.
+
+    Returns at least the first two vertices (the first edge).
+    """
+    n = len(vertices_xy)
+    if n < 2:
+        raise ValueError("Need at least 2 vertices to extract a spine")
+
+    spine = [vertices_xy[0], vertices_xy[1]]
+
+    for i in range(1, n - 1):
+        prev = vertices_xy[i - 1]
+        curr = vertices_xy[i]
+        nxt = vertices_xy[i + 1]
+
+        dx1 = curr[0] - prev[0]
+        dy1 = curr[1] - prev[1]
+        dx2 = nxt[0] - curr[0]
+        dy2 = nxt[1] - curr[1]
+
+        angle1 = math.atan2(dy1, dx1)
+        angle2 = math.atan2(dy2, dx2)
+        turn = math.degrees(angle2 - angle1)
+        # Normalize to [-180, 180]
+        turn = (turn + 180) % 360 - 180
+
+        if abs(turn) >= 90.0:
+            break
+        spine.append(nxt)
+
+    return spine
 
 
 def auto_heading(vertices_xy: list[tuple[float, float]]) -> float:

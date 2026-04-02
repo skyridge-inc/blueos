@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Mower 700 — main lawn zone</name>
+    <Placemark>
+      <name>Boundary</name>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>
+              -83.0397907024775,40.30035160816576,0
+              -83.03988817485076,40.30025702212762,0
+              -83.03966183992311,40.30016215453364,0
+              -83.03961184692403,40.30025780898227,0
+              -83.0397907024775,40.30035160816576,0
+            </coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+  </Document>
+</kml>

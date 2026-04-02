@@ -162,3 +162,19 @@ def generate_mow_path(
     # Unrotate waypoints back to original coordinate frame
     path = _unrotate_points(path_rotated, heading, cx, cy)
     return path
+
+
+def split_path_for_mowers(
+    path: list[tuple[float, float]],
+) -> list[list[tuple[float, float]]]:
+    """Split a boustrophedon path into one segment per mower (one strip each).
+
+    Each strip produces a pair of waypoints (start and end). Returns a list of
+    per-mower paths, where each mower gets exactly one strip (2 waypoints).
+    """
+    num_strips = len(path) // 2
+    if num_strips == 0:
+        return []
+    return [
+        [path[i * 2], path[i * 2 + 1]] for i in range(num_strips)
+    ]

@@ -1,62 +1,81 @@
-"""Tests for polygon parsing and coordinate projection."""
+"""Tests for KML parsing, coordinate projection, and spine extraction."""
 
 import math
 import pytest
-from nav_planning.polygon import parse_poly_file, to_xy, to_latlon, auto_heading
+from nav_planning.polygon import parse_kml_file, to_xy, to_latlon, extract_spine
+
+
+def _make_kml(coords_text: str) -> str:
+    """Build a minimal valid KML string with the given coordinates text."""
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<kml xmlns="http://www.opengis.net/kml/2.2">\n'
+        "  <Document><Placemark><Polygon><outerBoundaryIs><LinearRing>\n"
+        f"    <coordinates>{coords_text}</coordinates>\n"
+        "  </LinearRing></outerBoundaryIs></Polygon></Placemark></Document>\n"
+        "</kml>\n"
+    )
+
+
+# Closed rectangle: lon,lat,alt — note KML is lon-first
+RECT_COORDS = (
+    "-80.0,40.0,0 -79.999,40.0,0 -79.999,40.001,0 -80.0,40.001,0 -80.0,40.0,0"
+)
 
 
 @pytest.fixture
-def simple_poly(tmp_path):
-    """A simple square polygon file."""
-    p = tmp_path / "square.poly"
-    p.write_text(
-        "40.0 -80.0\n"
-        "40.0 -79.999\n"
-        "40.001 -79.999\n"
-        "40.001 -80.0\n"
-    )
+def valid_kml(tmp_path):
+    p = tmp_path / "rect.kml"
+    p.write_text(_make_kml(RECT_COORDS))
     return str(p)
 
 
-@pytest.fixture
-def poly_with_comments(tmp_path):
-    """Polygon file with comments and blank lines."""
-    p = tmp_path / "commented.poly"
-    p.write_text(
-        "# This is a boundary file\n"
-        "\n"
-        "40.0 -80.0\n"
-        "# Another comment\n"
-        "40.0 -79.999\n"
-        "\n"
-        "40.001 -79.999\n"
-        "40.001 -80.0\n"
-    )
-    return str(p)
-
-
-class TestParsePolyFile:
-    def test_valid_polygon(self, simple_poly):
-        vertices = parse_poly_file(simple_poly)
+class TestParseKmlFile:
+    def test_valid_kml(self, valid_kml):
+        vertices = parse_kml_file(valid_kml)
         assert len(vertices) == 4
-        assert vertices[0] == (40.0, -80.0)
-        assert vertices[3] == (40.001, -80.0)
+        # First vertex: lat=40.0, lon=-80.0 (swapped from KML lon,lat)
+        assert vertices[0] == pytest.approx((40.0, -80.0))
+        assert vertices[3] == pytest.approx((40.001, -80.0))
 
-    def test_comments_and_blanks(self, poly_with_comments):
-        vertices = parse_poly_file(poly_with_comments)
+    def test_closed_polygon_validation(self, tmp_path):
+        """Unclosed polygon must raise ValueError."""
+        unclosed = (
+            "-80.0,40.0,0 -79.999,40.0,0 -79.999,40.001,0 -80.0,40.001,0"
+        )
+        p = tmp_path / "unclosed.kml"
+        p.write_text(_make_kml(unclosed))
+        with pytest.raises(ValueError, match="not closed"):
+            parse_kml_file(str(p))
+
+    def test_strips_closing_coordinate(self, valid_kml):
+        """Returned list should NOT include the closing duplicate."""
+        vertices = parse_kml_file(valid_kml)
+        # 5 coords in KML (closed ring), returned as 4 unique vertices
         assert len(vertices) == 4
+        assert vertices[0] != vertices[-1] or len(vertices) == 4
+
+    def test_no_polygon_in_kml(self, tmp_path):
+        kml = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<kml xmlns="http://www.opengis.net/kml/2.2">\n'
+            "  <Document><Placemark><Point>"
+            "<coordinates>-80.0,40.0,0</coordinates>"
+            "</Point></Placemark></Document>\n"
+            "</kml>\n"
+        )
+        p = tmp_path / "nopoint.kml"
+        p.write_text(kml)
+        with pytest.raises(ValueError, match="No <Polygon>"):
+            parse_kml_file(str(p))
 
     def test_insufficient_vertices(self, tmp_path):
-        p = tmp_path / "short.poly"
-        p.write_text("40.0 -80.0\n40.0 -79.999\n")
-        with pytest.raises(ValueError, match="at least 3 vertices"):
-            parse_poly_file(str(p))
-
-    def test_malformed_line(self, tmp_path):
-        p = tmp_path / "bad.poly"
-        p.write_text("40.0 -80.0\nbadline\n40.001 -80.0\n")
-        with pytest.raises(ValueError, match="Malformed line"):
-            parse_poly_file(str(p))
+        """A polygon with only 2 unique vertices + close should fail."""
+        coords = "-80.0,40.0,0 -79.999,40.0,0 -80.0,40.0,0"
+        p = tmp_path / "short.kml"
+        p.write_text(_make_kml(coords))
+        with pytest.raises(ValueError, match="at least 3"):
+            parse_kml_file(str(p))
 
 
 class TestProjection:
@@ -82,16 +101,36 @@ class TestProjection:
         assert 110 < dy < 113  # ~111.32m per 0.001 deg lat
 
 
-class TestAutoHeading:
-    def test_east_west_rectangle(self):
-        """A rectangle wider than tall should give heading ~90 (east-west)."""
-        # 10m wide (X), 5m tall (Y) rectangle
+class TestExtractSpine:
+    def test_rectangle_stops_at_first_corner(self):
+        """Rectangle: spine follows first edge, stops at 90-degree corner."""
+        # 10m wide, 5m tall rectangle
         xy = [(0, 0), (10, 0), (10, 5), (0, 5)]
-        heading = auto_heading(xy)
-        assert abs(heading - 90.0) < 0.1
+        spine = extract_spine(xy)
+        # Turn at vertex 1 (10,0) is 90° → spine = [(0,0), (10,0)]
+        assert len(spine) == 2
+        assert spine[0] == (0, 0)
+        assert spine[1] == (10, 0)
 
-    def test_north_south_rectangle(self):
-        """A rectangle taller than wide should give heading ~0 (north-south)."""
-        xy = [(0, 0), (5, 0), (5, 10), (0, 10)]
-        heading = auto_heading(xy)
-        assert heading < 1.0 or heading > 179.0  # ~0 or ~180, normalized to [0,180)
+    def test_corridor_follows_gentle_curves(self):
+        """Multi-vertex corridor with < 90° turns — spine follows all."""
+        # A gentle zigzag corridor (all turns < 90°)
+        xy = [(0, 0), (10, 1), (20, -1), (30, 0.5), (30, 10)]
+        spine = extract_spine(xy)
+        # Turn at (30, 0.5) to (30, 10) is ~90° — check we got at least 4 vertices
+        assert len(spine) >= 4
+        assert spine[0] == (0, 0)
+
+    def test_all_sharp_turns(self):
+        """If very first turn is >= 90°, spine is just the first edge."""
+        # Triangle with sharp angles
+        xy = [(0, 0), (10, 0), (5, 10)]
+        spine = extract_spine(xy)
+        # Turn at (10, 0) is ~117° → spine = first edge only
+        assert len(spine) == 2
+
+    def test_minimum_two_vertices(self):
+        """Spine always has at least 2 vertices (the first edge)."""
+        xy = [(0, 0), (5, 0), (5, 5)]
+        spine = extract_spine(xy)
+        assert len(spine) >= 2

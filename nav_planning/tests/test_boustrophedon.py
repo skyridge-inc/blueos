@@ -84,3 +84,30 @@ class TestGenerateMowPath:
         verts = [(0, 0), (10, 0), (10, 5), (0, 5)]
         with pytest.raises(ValueError, match="non-positive spacing"):
             generate_mow_path(verts, width=1.0, overlap=100.0, heading=90.0)
+
+
+class TestSplitPathForMowers:
+    def test_one_strip_per_mower(self):
+        """5-strip path should split into 5 mower segments of 2 points each."""
+        from nav_planning.boustrophedon import split_path_for_mowers
+
+        # Simulate 5 strips: 10 waypoints (2 per strip)
+        path = [(i, 0) for i in range(10)]
+        segments = split_path_for_mowers(path)
+        assert len(segments) == 5
+        for seg in segments:
+            assert len(seg) == 2
+
+    def test_single_strip(self):
+        """A single strip should produce one mower segment."""
+        from nav_planning.boustrophedon import split_path_for_mowers
+
+        path = [(0, 0), (10, 0)]
+        segments = split_path_for_mowers(path)
+        assert len(segments) == 1
+        assert segments[0] == [(0, 0), (10, 0)]
+
+    def test_empty_path(self):
+        from nav_planning.boustrophedon import split_path_for_mowers
+
+        assert split_path_for_mowers([]) == []
