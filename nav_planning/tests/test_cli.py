@@ -1,6 +1,7 @@
 """CLI integration tests."""
 
 import glob
+import os
 import pytest
 from typer.testing import CliRunner
 from nav_planning.cli import app
@@ -72,6 +73,21 @@ class TestMowCommand:
             app, [str(sample_kml), "--width", "21", "-o", str(out)]
         )
         assert result.exit_code == 0
+
+    def test_visualize_flag_produces_html(self, sample_kml):
+        """--visualize should produce an HTML file alongside waypoints."""
+        result = runner.invoke(app, [str(sample_kml), "--width", "21", "--visualize"])
+        assert result.exit_code == 0
+        stem = str(sample_kml).replace(".kml", "")
+        assert os.path.exists(f"{stem}.html")
+        assert "Visualization" in result.output
+
+    def test_no_visualize_no_html(self, sample_kml):
+        """Without --visualize, no HTML file should be produced."""
+        result = runner.invoke(app, [str(sample_kml), "--width", "21"])
+        assert result.exit_code == 0
+        stem = str(sample_kml).replace(".kml", "")
+        assert not os.path.exists(f"{stem}.html")
 
     def test_unclosed_polygon_error(self, tmp_path):
         """An unclosed KML polygon should produce an error."""

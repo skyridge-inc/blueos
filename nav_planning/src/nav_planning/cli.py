@@ -12,6 +12,7 @@ from rich.panel import Panel
 from nav_planning.polygon import parse_kml_file, to_xy, to_latlon, extract_spine
 from nav_planning.contour import generate_contour_paths, INCHES_TO_METERS
 from nav_planning.waypoints import write_waypoints
+from nav_planning.visualize import generate_visualization_html
 
 app = typer.Typer(help="Waypoint mission planning for Skyridge autonomous mower fleet.")
 console = Console()
@@ -23,6 +24,9 @@ def mow(
     width: float = typer.Option(..., "--width", "-w", help="Mower cutting width in inches"),
     output: Optional[str] = typer.Option(
         None, "-o", "--output", help="Output base path for .waypoints files"
+    ),
+    visualize: bool = typer.Option(
+        False, "--visualize", help="Generate an interactive HTML map visualization"
     ),
 ) -> None:
     """Generate contour-following mowing missions from a KML polygon boundary."""
@@ -73,3 +77,8 @@ def mow(
             f"[green]{num_mowers} mower files written:[/green]\n{file_list}",
             title="Done",
         ))
+
+    if visualize:
+        viz_path = f"{base}.html"
+        generate_visualization_html(mower_paths, viz_path)
+        console.print(f"[bold]Visualization:[/bold] [cyan]{viz_path}[/cyan]")
