@@ -89,6 +89,36 @@ class TestMowCommand:
         stem = str(sample_kml).replace(".kml", "")
         assert not os.path.exists(f"{stem}.html")
 
+    def test_kml_track_flag_produces_kml(self, sample_kml):
+        """--kml-track should produce a _track.kml file."""
+        result = runner.invoke(app, [str(sample_kml), "--width", "21", "--kml-track"])
+        assert result.exit_code == 0
+        stem = str(sample_kml).replace(".kml", "")
+        assert os.path.exists(f"{stem}_track.kml")
+        assert "KML Track" in result.output
+
+    def test_no_kml_track_no_file(self, sample_kml):
+        """Without --kml-track, no _track.kml file should be produced."""
+        result = runner.invoke(app, [str(sample_kml), "--width", "21"])
+        assert result.exit_code == 0
+        stem = str(sample_kml).replace(".kml", "")
+        assert not os.path.exists(f"{stem}_track.kml")
+
+    def test_kml_tour_flag_produces_kml(self, sample_kml):
+        """--kml-tour should produce a _tour.kml file."""
+        result = runner.invoke(app, [str(sample_kml), "--width", "21", "--kml-tour"])
+        assert result.exit_code == 0
+        stem = str(sample_kml).replace(".kml", "")
+        assert os.path.exists(f"{stem}_tour.kml")
+        assert "KML Tour" in result.output
+
+    def test_no_kml_tour_no_file(self, sample_kml):
+        """Without --kml-tour, no _tour.kml file should be produced."""
+        result = runner.invoke(app, [str(sample_kml), "--width", "21"])
+        assert result.exit_code == 0
+        stem = str(sample_kml).replace(".kml", "")
+        assert not os.path.exists(f"{stem}_tour.kml")
+
     def test_unclosed_polygon_error(self, tmp_path):
         """An unclosed KML polygon should produce an error."""
         unclosed = (

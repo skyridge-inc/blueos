@@ -13,6 +13,7 @@ from nav_planning.polygon import parse_kml_file, to_xy, to_latlon, extract_spine
 from nav_planning.contour import generate_contour_paths, INCHES_TO_METERS
 from nav_planning.waypoints import write_waypoints
 from nav_planning.visualize import generate_visualization_html
+from nav_planning.kml import generate_kml_track, generate_kml_tour
 
 app = typer.Typer(help="Waypoint mission planning for Skyridge autonomous mower fleet.")
 console = Console()
@@ -27,6 +28,12 @@ def mow(
     ),
     visualize: bool = typer.Option(
         False, "--visualize", help="Generate an interactive HTML map visualization"
+    ),
+    kml_track: bool = typer.Option(
+        False, "--kml-track", help="Generate KML with gx:Track animation for Google Earth"
+    ),
+    kml_tour: bool = typer.Option(
+        False, "--kml-tour", help="Generate KML tour flyover for Google Earth"
     ),
 ) -> None:
     """Generate contour-following mowing missions from a KML polygon boundary."""
@@ -82,3 +89,13 @@ def mow(
         viz_path = f"{base}.html"
         generate_visualization_html(mower_paths, viz_path)
         console.print(f"[bold]Visualization:[/bold] [cyan]{viz_path}[/cyan]")
+
+    if kml_track:
+        track_path = f"{base}_track.kml"
+        generate_kml_track(mower_paths, track_path)
+        console.print(f"[bold]KML Track:[/bold] [cyan]{track_path}[/cyan]")
+
+    if kml_tour:
+        tour_path = f"{base}_tour.kml"
+        generate_kml_tour(mower_paths, tour_path)
+        console.print(f"[bold]KML Tour:[/bold] [cyan]{tour_path}[/cyan]")
