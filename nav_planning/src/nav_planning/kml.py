@@ -162,22 +162,53 @@ def generate_kml_tour(
         coords_text = " ".join(f"{lon},{lat},0" for lat, lon in path)
         ET.SubElement(line, _kml("coordinates")).text = coords_text
 
-    # Tour following mower 1
+    # Animated gx:Track placemarks for all mowers
+    # Pre-compute timestamps for mower 1 (used to sync the tour camera)
+    guide_timestamps: list[datetime] = []
+    for i, path in enumerate(mower_paths):
+        color = COLORS[i % len(COLORS)]
+        kml_col = _kml_color(color)
+
+        style_id = f"tour-mower{i+1}-style"
+        style = ET.SubElement(doc, _kml("Style"), id=style_id)
+        icon_style = ET.SubElement(style, _kml("IconStyle"))
+        ET.SubElement(icon_style, _kml("color")).text = kml_col
+
+        pm = ET.SubElement(doc, _kml("Placemark"))
+        ET.SubElement(pm, _kml("name")).text = f"Mower {i+1}"
+        ET.SubElement(pm, _kml("styleUrl")).text = f"#{style_id}"
+
+        track = ET.SubElement(pm, _gx("Track"))
+        t = BASE_TIME
+        timestamps: list[datetime] = []
+        for j, (lat, lon) in enumerate(path):
+            timestamps.append(t)
+            ET.SubElement(track, "when").text = t.strftime("%Y-%m-%dT%H:%M:%SZ")
+            if j < len(path) - 1:
+                dist = _haversine_distance(path[j], path[j + 1])
+                dt = dist / speed_mps if speed_mps > 0 else 1.0
+                t += timedelta(seconds=dt)
+        for lat, lon in path:
+            ET.SubElement(track, _gx("coord")).text = f"{lon} {lat} 0"
+
+        if i == 0:
+            guide_timestamps = timestamps
+
+    # Tour camera following mower 1
     guide_path = mower_paths[0]
     tour = ET.SubElement(doc, _gx("Tour"))
     ET.SubElement(tour, _kml("name")).text = "Mower Flyover"
     playlist = ET.SubElement(tour, _gx("Playlist"))
 
+    heading = 0.0
     for j, (lat, lon) in enumerate(guide_path):
-        # Compute heading toward next point (or keep last heading)
         if j < len(guide_path) - 1:
             heading = _compute_heading(guide_path[j], guide_path[j + 1])
-        # else: reuse heading from previous iteration
 
-        # Compute duration from distance
-        if j < len(guide_path) - 1:
-            dist = _haversine_distance(guide_path[j], guide_path[j + 1])
-            duration = max(0.5, min(5.0, dist / speed_mps))
+        # Duration synced to track timestamps
+        if j < len(guide_timestamps) - 1:
+            dt = (guide_timestamps[j + 1] - guide_timestamps[j]).total_seconds()
+            duration = max(0.5, min(5.0, dt))
         else:
             duration = 1.0
 

@@ -61,6 +61,17 @@ class TestGenerateContourPaths:
         with pytest.raises(ValueError, match="positive"):
             generate_contour_paths(verts, spine, width_inches=0)
 
+    def test_no_consecutive_duplicate_coords(self):
+        """Paths should not contain consecutive duplicate coordinates."""
+        verts = [(0, 0), (100, 0), (100, 10), (0, 10)]
+        spine = [(0, 0), (100, 0)]
+        paths = generate_contour_paths(verts, spine, width_inches=21)
+        for i, path in enumerate(paths):
+            for j in range(1, len(path)):
+                assert path[j] != path[j - 1], (
+                    f"Path {i} has consecutive duplicate at index {j}: {path[j]}"
+                )
+
     def test_narrowing_polygon(self):
         """A polygon that narrows should produce fewer paths in the narrow section."""
         # Trapezoid: 10m wide at left, 4m wide at right, 50m long

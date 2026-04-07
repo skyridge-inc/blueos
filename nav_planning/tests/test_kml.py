@@ -140,6 +140,22 @@ class TestGenerateKmlTour:
         mode = root.find(f".//{{{GX_NS}}}flyToMode")
         assert mode.text == "smooth"
 
+    def test_contains_animated_tracks(self, tmp_path):
+        """Tour should include gx:Track placemarks for animated mower markers."""
+        out = tmp_path / "tour.kml"
+        generate_kml_tour(MULTI_PATHS, str(out))
+        root = _parse(str(out))
+        tracks = root.findall(f".//{{{GX_NS}}}Track")
+        assert len(tracks) == 2
+
+    def test_tour_has_both_track_and_tour(self, tmp_path):
+        """Tour KML should contain both gx:Track (mower animation) and gx:Tour (camera)."""
+        out = tmp_path / "tour.kml"
+        generate_kml_tour([SINGLE_PATH], str(out))
+        root = _parse(str(out))
+        assert root.find(f".//{{{GX_NS}}}Track") is not None
+        assert root.find(f".//{{{GX_NS}}}Tour") is not None
+
     def test_empty_paths_raises(self):
         with pytest.raises(ValueError, match="No mower paths"):
             generate_kml_tour([], "/dev/null")

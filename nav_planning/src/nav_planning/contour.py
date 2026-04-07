@@ -91,12 +91,18 @@ def generate_contour_paths(
 def _extract_coords(
     geom: LineString | MultiLineString,
 ) -> list[tuple[float, float]]:
-    """Extract coordinate tuples from a Shapely line geometry."""
+    """Extract coordinate tuples from a Shapely line geometry.
+
+    Deduplicates consecutive coordinates that arise when MultiLineString
+    segments share endpoints.
+    """
     if isinstance(geom, LineString):
         return [(x, y) for x, y in geom.coords]
     elif isinstance(geom, MultiLineString):
         coords: list[tuple[float, float]] = []
         for line in geom.geoms:
-            coords.extend((x, y) for x, y in line.coords)
+            for x, y in line.coords:
+                if not coords or (x, y) != coords[-1]:
+                    coords.append((x, y))
         return coords
     return []
