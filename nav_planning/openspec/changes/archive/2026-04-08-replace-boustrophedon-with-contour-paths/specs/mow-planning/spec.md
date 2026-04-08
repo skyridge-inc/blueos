@@ -1,4 +1,4 @@
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Contour-Following Path Generation
 The system SHALL generate mowing paths that follow the polygon boundary contour rather than back-and-forth strips. The first path SHALL start at the first KML vertex and follow subsequent vertices until encountering a turn of 90 degrees or more. Subsequent paths SHALL be parallel offsets inward from the first path, spaced by the mower width. All paths SHALL be clipped to remain within the polygon boundary. The system SHALL output one waypoint file per mower path.
