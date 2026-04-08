@@ -636,3 +636,114 @@ def upload(
             err_console.print(f"[yellow]Warning: Could not write autopilot params: {e}[/yellow]")
 
     console.print(f"[green]Upload complete: {', '.join(uploaded)}[/green]")
+
+
+@app.command("nav-plan")
+def nav_plan(
+    kml_file: Annotated[
+        Path, typer.Argument(help="Path to KML boundary file."),
+    ],
+    width: Annotated[
+        float,
+        typer.Option("--width", "-w", help="Mower cutting width in inches."),
+    ],
+    output: Annotated[
+        Optional[Path],
+        typer.Option("--output", "-o", help="Output base path for .waypoints files."),
+    ] = None,
+    visualize: Annotated[
+        bool,
+        typer.Option("--visualize", help="Generate an interactive HTML map visualization."),
+    ] = False,
+    kml_track: Annotated[
+        bool,
+        typer.Option("--kml-track", help="Generate KML with gx:Track animation for Google Earth."),
+    ] = False,
+    kml_tour: Annotated[
+        bool,
+        typer.Option("--kml-tour", help="Generate KML tour flyover for Google Earth."),
+    ] = False,
+) -> None:
+    """Generate contour-following mowing missions from a KML polygon boundary.
+
+    Pure file-to-file: opens no MAVLink or HTTP connection.
+    """
+    from rich.panel import Panel
+
+    from .mission_planning import (
+        INCHES_TO_METERS,
+        extract_spine,
+        generate_contour_paths,
+        generate_kml_track,
+        generate_kml_tour,
+        generate_visualization_html,
+        parse_kml_file,
+        to_latlon,
+        to_xy,
+        write_waypoints,
+    )
+
+    kml_path_str = str(kml_file)
+
+    # Parse and project the polygon
+    vertices = parse_kml_file(kml_path_str)
+    console.print(f"[bold]Polygon:[/bold] {len(vertices)} vertices from {kml_file}")
+
+    xy, origin = to_xy(vertices)
+
+    # Extract spine (vertices walked until first >= 90 degree turn)
+    spine_xy = extract_spine(xy)
+    console.print(f"[bold]Spine:[/bold] {len(spine_xy)} vertices (until \u226590\u00b0 turn)")
+
+    width_m = width * INCHES_TO_METERS
+    console.print(f"[bold]Mower width:[/bold] {width}\" ({width_m:.4f}m)")
+
+    mower_paths_xy = generate_contour_paths(xy, spine_xy, width_inches=width)
+    num_mowers = len(mower_paths_xy)
+    console.print(f"[bold]Mowers required:[/bold] {num_mowers}")
+
+    mower_paths = [to_latlon(path, origin) for path in mower_paths_xy]
+
+    # Determine output base path (strip extension if user gave one)
+    if output is None:
+        base = os.path.splitext(kml_path_str)[0]
+    else:
+        base = os.path.splitext(str(output))[0]
+
+    if num_mowers == 0:
+        err_console.print(
+            "[red]No paths generated \u2014 polygon may be too narrow for the mower width[/red]"
+        )
+        raise typer.Exit(code=1)
+    elif num_mowers == 1:
+        out_path = f"{base}.waypoints"
+        write_waypoints(out_path, mower_paths[0], home=vertices[0])
+        console.print(Panel(f"[green]Written to {out_path}[/green]", title="Done"))
+    else:
+        written_paths = []
+        for i, segment in enumerate(mower_paths, start=1):
+            out_path = f"{base}_mower{i}.waypoints"
+            write_waypoints(out_path, segment, home=vertices[0])
+            written_paths.append(out_path)
+        file_list = "\n".join(f"  [green]{p}[/green]" for p in written_paths)
+        console.print(
+            Panel(
+                f"[green]{num_mowers} mower files written:[/green]\n{file_list}",
+                title="Done",
+            )
+        )
+
+    if visualize:
+        viz_path = f"{base}.html"
+        generate_visualization_html(mower_paths, viz_path)
+        console.print(f"[bold]Visualization:[/bold] [cyan]{viz_path}[/cyan]")
+
+    if kml_track:
+        track_path = f"{base}_track.kml"
+        generate_kml_track(mower_paths, track_path)
+        console.print(f"[bold]KML Track:[/bold] [cyan]{track_path}[/cyan]")
+
+    if kml_tour:
+        tour_path = f"{base}_tour.kml"
+        generate_kml_tour(mower_paths, tour_path)
+        console.print(f"[bold]KML Tour:[/bold] [cyan]{tour_path}[/cyan]")
