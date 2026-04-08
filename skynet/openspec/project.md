@@ -29,4 +29,3 @@ The goal is repeatable, safe provisioning of a fleet of 10+ mowers from version-
 ## Out of Scope
 - Real-hardware integration tests
 - ArduPilot firmware flashing
-- Mission/waypoint planning (handled by the sibling `nav_planning` project)

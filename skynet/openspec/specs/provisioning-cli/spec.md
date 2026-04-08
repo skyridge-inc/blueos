@@ -182,6 +182,35 @@ The `upload` command SHALL load a YAML configuration file and apply its writable
 - **THEN** a confirmation prompt is shown after the summary
 - **AND** declining aborts the command
 
+### Requirement: nav-plan Command
+The `nav-plan` command SHALL generate contour-following mowing missions from a KML polygon boundary file by composing the `mission-planning` capability. It SHALL accept a positional `kml_file` argument and a required `--width` / `-w` option in inches. It SHALL accept an optional `--output` / `-o` base path; when omitted, the base path SHALL be the input KML path with its extension stripped. It SHALL accept three independent visualization flags: `--visualize` (HTML map), `--kml-track` (Google Earth track), and `--kml-tour` (Google Earth tour). The command SHALL print, in order: the polygon vertex count, the spine vertex count, the mower width in both inches and meters, the number of mowers required, the path of each `.waypoints` file written, and the path of any visualization file generated. The command MUST NOT open any MAVLink or HTTP connection — it is purely a file-to-file operation.
+
+#### Scenario: Minimal invocation
+- **WHEN** the user runs `mower-provision nav-plan field.kml --width 21`
+- **THEN** the command parses `field.kml`, generates contour-following paths at 21 inches (0.5334 m) spacing, and writes one or more `.waypoints` files next to the input
+- **AND** no MAVLink or HTTP connection is opened
+
+#### Scenario: Custom output base
+- **WHEN** the user runs `mower-provision nav-plan field.kml --width 21 -o /tmp/mission`
+- **THEN** waypoint files are written under `/tmp/mission` (e.g. `/tmp/mission.waypoints` or `/tmp/mission_mowerN.waypoints`) regardless of any extension on `-o`
+
+#### Scenario: Multi-mower output naming
+- **WHEN** the polygon admits more than one contour path
+- **THEN** files are named `<base>_mower1.waypoints` … `<base>_mowerN.waypoints` and the CLI prints "Mowers required: N" along with each written path
+
+#### Scenario: All visualization flags together
+- **WHEN** the user runs `mower-provision nav-plan field.kml --width 21 --visualize --kml-track --kml-tour`
+- **THEN** the command additionally writes `<base>.html`, `<base>_track.kml`, and `<base>_tour.kml`
+- **AND** the `.waypoints` file contents are unchanged versus an invocation without those flags
+
+#### Scenario: Polygon too narrow
+- **WHEN** the polygon cannot accommodate even a single contour path at the requested width
+- **THEN** the CLI prints a red error indicating the polygon may be too narrow for the mower width and exits with non-zero status
+
+#### Scenario: Missing required width
+- **WHEN** the user runs `mower-provision nav-plan field.kml` without `--width`
+- **THEN** Typer prints an error indicating `--width` is required and exits non-zero
+
 ### Requirement: Exception Mapping
 The system SHALL define an exception hierarchy rooted at `MowerProvisionerError`, with three independent branches: `ConnectionError` (with subclass `HeartbeatTimeout`), `ParameterError` (with subclasses `ParameterFetchError` and `ParameterWriteError`), `ParamFileError`, and `BlueOSError` (with subclass `BlueOSConnectionError`). All exceptions raised by the library SHALL inherit from `MowerProvisionerError`.
 
