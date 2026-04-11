@@ -35,7 +35,20 @@ skynet nav plan field.kml --width 21
 
 # Upload a .waypoints mission to the autopilot via the BlueOS MAVLink proxy
 skynet nav upload ./output/700_long_mower1.waypoints -d tcp:192.168.2.2:5760 --yes
+
+# Run a HW-in-the-loop GPS/heading simulator so ArduRover flies the uploaded
+# mission on a real Pixhawk Cube Orange+ with no real GPS. The simulator
+# reads SERVO_OUTPUT_RAW, runs a skid-steer kinematic model, and injects
+# GPS_INPUT back to the autopilot. Arm in AUTO from Mission Planner.
+skynet nav sim -d tcp:192.168.2.2:5760 --ground-speed 2 --yes
 ```
+
+**Note on `nav sim`**: the command temporarily rewrites `GPS_TYPE`,
+`AHRS_EKF_TYPE`, and `EK3_SRC1_*` params to put the autopilot into external
+GPS mode. Originals are saved to a sidecar file at
+`~/.config/skynet/sim_restore_<slug>.param` before any mutation and
+restored on exit. If the process is killed (`kill -9`) mid-run, recover
+with `skynet misc write <sidecar> --yes --include-calibration`.
 
 ## Commands
 

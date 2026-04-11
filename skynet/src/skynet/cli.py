@@ -654,6 +654,228 @@ def upload(
     console.print(f"[green]Upload complete: {', '.join(uploaded)}[/green]")
 
 
+@nav_app.command("sim")
+def nav_sim(
+    device: DeviceOption = DEFAULT_DEVICE,
+    baud: BaudOption = DEFAULT_BAUD,
+    ground_speed: Annotated[
+        float,
+        typer.Option(
+            "--ground-speed",
+            help="Max ground speed at full throttle (mph).",
+        ),
+    ] = 2.0,
+    rate: Annotated[
+        int,
+        typer.Option("--rate", help="GPS_INPUT emit rate in Hz (1-20)."),
+    ] = 5,
+    track_width: Annotated[
+        float,
+        typer.Option(
+            "--track-width", help="Skid-steer track width in meters."
+        ),
+    ] = 0.5,
+    duration: Annotated[
+        Optional[float],
+        typer.Option("--duration", help="Wall-clock safety timeout (s)."),
+    ] = None,
+    start_seq: Annotated[
+        int,
+        typer.Option("--start-seq", help="Mission seq to spawn at."),
+    ] = 1,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Print plan and exit.")
+    ] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="Skip confirmation.")
+    ] = False,
+) -> None:
+    """Run a HW-in-the-loop GPS/heading simulator against a real autopilot.
+
+    Downloads the current mission, spawns a skid-steer rover at the first
+    waypoint, and feeds GPS_INPUT back to the autopilot so it flies the
+    mission in AUTO mode against simulated sensor data. Pixhawk Cube Orange+
+    attitude loop, motor outputs, and EKF are all real — only the GPS and
+    heading are simulated.
+
+    Uses the same connection machinery as `misc connect`, so pointing at the
+    BlueOS MAVLink proxy is just `-d tcp:<host>:5760`.
+    """
+    import time as _time
+
+    from .exceptions import (
+        FrameMismatchError,
+        GpsSimError,
+        MissionDownloadError,
+        MowerProvisionerError,
+    )
+    from .gps_sim import (
+        MPH_TO_MPS,
+        SIM_PARAMS,
+        GpsInputEmitter,
+        ServoNormalizer,
+        SimParamContext,
+        SkidSteerModel,
+        StopWatcher,
+        request_servo_output_stream,
+        sidecar_path,
+        validate_skid_steer,
+        wait_for_servo_output,
+    )
+    from .mission_download import download_mission
+    from .params import fetch_all_params
+
+    max_speed_mps = ground_speed * MPH_TO_MPS
+
+    # Refuse upfront if sidecar exists — before even opening a connection.
+    sidecar = sidecar_path(device)
+    if sidecar.exists():
+        err_console.print(
+            f"[red]Leftover sidecar file detected: {sidecar}[/red]\n"
+            f"[red]A previous `skynet nav sim` run likely crashed. "
+            f"Restore the autopilot with:[/red]\n"
+            f"  [bold]skynet misc write {sidecar} --yes --include-calibration[/bold]\n"
+            f"[red]Then delete the sidecar and retry.[/red]"
+        )
+        raise typer.Exit(1)
+
+    try:
+        with mavlink_connection(device, baud=baud) as conn:
+            with console.status("Downloading mission from autopilot..."):
+                mission = download_mission(conn)
+            console.print(
+                f"Downloaded [bold]{len(mission) - 1}[/bold] waypoints "
+                f"(+ home) from autopilot"
+            )
+
+            if start_seq < 1 or start_seq >= len(mission):
+                err_console.print(
+                    f"[red]--start-seq {start_seq} out of range "
+                    f"(mission has {len(mission)} items, valid 1..{len(mission) - 1})[/red]"
+                )
+                raise typer.Exit(1)
+
+            with console.status("Reading frame and servo params..."):
+                all_params = fetch_all_params(conn)
+            validate_skid_steer(all_params)
+            console.print(
+                "[green]Frame OK:[/green] skid-steer rover "
+                "(SERVO1=ThrottleLeft, SERVO3=ThrottleRight)"
+            )
+
+            start_lat, start_lon = mission[start_seq]
+            last_seq = len(mission) - 1
+
+            table = Table(title="Sim config")
+            table.add_column("Setting", style="bold")
+            table.add_column("Value")
+            table.add_row("Device", device)
+            table.add_row("Ground speed", f"{ground_speed} mph ({max_speed_mps:.4f} m/s)")
+            table.add_row("Rate", f"{rate} Hz")
+            table.add_row("Track width", f"{track_width} m")
+            table.add_row("Start seq", str(start_seq))
+            table.add_row("Start lat/lon", f"{start_lat:.8f}, {start_lon:.8f}")
+            table.add_row("Last mission seq", str(last_seq))
+            table.add_row("Duration", f"{duration}s" if duration else "none")
+            console.print(table)
+
+            if dry_run:
+                console.print("[yellow]DRY RUN — param diff that would be applied:[/yellow]")
+                for name, sim_val in sorted(SIM_PARAMS.items()):
+                    current = all_params.get(name, "—")
+                    console.print(f"  {name}: {current} → {sim_val}")
+                console.print("[yellow]DRY RUN — no GPS_INPUT sent, no params written.[/yellow]")
+                return
+
+            if not yes:
+                typer.confirm(
+                    f"Apply sim param overrides to {device} and start the loop?",
+                    abort=True,
+                )
+
+            left_norm = ServoNormalizer(1, all_params)
+            right_norm = ServoNormalizer(3, all_params)
+            model = SkidSteerModel(
+                start_lat=start_lat,
+                start_lon=start_lon,
+                max_speed_mps=max_speed_mps,
+                track_width_m=track_width,
+            )
+
+            with SimParamContext(conn, device):
+                request_servo_output_stream(conn, rate_hz=10.0)
+                with console.status("Waiting for SERVO_OUTPUT_RAW..."):
+                    first = wait_for_servo_output(conn, timeout=2.0)
+
+                emitter = GpsInputEmitter(conn, model, rate_hz=float(rate))
+                watcher_cm = StopWatcher(
+                    last_mission_seq=last_seq, duration_seconds=duration
+                )
+
+                dt = 1.0 / float(rate)
+                last_servo1 = float(first.servo1_raw)
+                last_servo3 = float(first.servo3_raw)
+                armed_banner_printed = False
+
+                with watcher_cm as watcher:
+                    console.print(
+                        "[green]Sim running. Arm in AUTO via GCS to begin.[/green]"
+                    )
+                    try:
+                        while not watcher.should_stop:
+                            tick_start = _time.monotonic()
+
+                            # Drain inbox for state updates.
+                            while True:
+                                msg = conn.recv_match(blocking=False)
+                                if msg is None:
+                                    break
+                                t = msg.get_type()
+                                if t == "SERVO_OUTPUT_RAW":
+                                    last_servo1 = float(msg.servo1_raw)
+                                    last_servo3 = float(msg.servo3_raw)
+                                elif t == "HEARTBEAT":
+                                    watcher.observe_heartbeat(msg.base_mode)
+                                elif t == "MISSION_ITEM_REACHED":
+                                    watcher.observe_mission_reached(msg.seq)
+
+                            left = left_norm.normalize(last_servo1)
+                            right = right_norm.normalize(last_servo3)
+                            _lat, _lon, _hdg, vn, ve = model.step(dt, left, right)
+                            emitter.set_velocity(vn, ve)
+                            emitter.emit()
+
+                            if watcher.armed_latch and not armed_banner_printed:
+                                console.print(
+                                    "[green]GPS lock established. Autopilot is armed.[/green]"
+                                )
+                                armed_banner_printed = True
+
+                            watcher.check_duration()
+
+                            elapsed = _time.monotonic() - tick_start
+                            sleep_for = dt - elapsed
+                            if sleep_for > 0:
+                                _time.sleep(sleep_for)
+                    except KeyboardInterrupt:
+                        watcher.trip("KeyboardInterrupt")
+
+                console.print(
+                    f"[green]Sim stopped: {watcher.stop_reason or 'clean exit'}[/green]"
+                )
+
+    except (
+        MissionDownloadError,
+        FrameMismatchError,
+        GpsSimError,
+    ) as e:
+        err_console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+    except MowerProvisionerError as e:
+        err_console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+
+
 @nav_app.command("upload")
 def nav_upload(
     waypoint_file: Annotated[

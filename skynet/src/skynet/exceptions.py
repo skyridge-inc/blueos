@@ -39,3 +39,15 @@ class BlueOSConnectionError(BlueOSError):
 
 class MissionUploadError(MowerProvisionerError):
     """Failed to upload a mission to the autopilot."""
+
+
+class MissionDownloadError(MowerProvisionerError):
+    """Failed to download a mission from the autopilot."""
+
+
+class GpsSimError(MowerProvisionerError):
+    """Error in the GPS/heading simulator."""
+
+
+class FrameMismatchError(GpsSimError):
+    """Autopilot frame is not the expected skid-steer configuration."""
