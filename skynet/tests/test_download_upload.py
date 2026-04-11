@@ -9,8 +9,8 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from mower_provisioner.cli import app
-from mower_provisioner.config import CALIBRATION_PARAMS
+from skynet.cli import app
+from skynet.config import CALIBRATION_PARAMS
 
 runner = CliRunner()
 
@@ -57,8 +57,8 @@ def _mock_mavlink_conn(param_msgs):
 
 
 class TestDownload:
-    @patch("mower_provisioner.cli.mavlink_connection")
-    @patch("mower_provisioner.blueos_api.BlueOSClient")
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
     def test_basic_download(self, mock_cls, mock_mavlink, tmp_path):
         mock_cls.return_value = _mock_blueos_client()
         mock_mavlink.return_value = _mock_mavlink_conn([
@@ -67,7 +67,7 @@ class TestDownload:
         ])
 
         out = tmp_path / "test.yaml"
-        result = runner.invoke(app, ["download", "192.168.2.2", "-o", str(out)])
+        result = runner.invoke(app, ["config", "download", "192.168.2.2", "-o", str(out)])
         assert result.exit_code == 0, result.output
 
         data = yaml.safe_load(out.read_text())
@@ -76,8 +76,8 @@ class TestDownload:
         assert data["autopilot_params"]["WP_RADIUS"] == 3.0
         mock_mavlink.assert_called_once_with("tcp:192.168.2.2:5760")
 
-    @patch("mower_provisioner.cli.mavlink_connection")
-    @patch("mower_provisioner.blueos_api.BlueOSClient")
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
     def test_filters_calibration_by_default(self, mock_cls, mock_mavlink, tmp_path):
         mock_cls.return_value = _mock_blueos_client()
         cal_param = next(iter(CALIBRATION_PARAMS))
@@ -87,15 +87,15 @@ class TestDownload:
         ])
 
         out = tmp_path / "test.yaml"
-        result = runner.invoke(app, ["download", "192.168.2.2", "-o", str(out)])
+        result = runner.invoke(app, ["config", "download", "192.168.2.2", "-o", str(out)])
         assert result.exit_code == 0, result.output
 
         data = yaml.safe_load(out.read_text())
         assert "CRUISE_SPEED" in data["autopilot_params"]
         assert cal_param not in data["autopilot_params"]
 
-    @patch("mower_provisioner.cli.mavlink_connection")
-    @patch("mower_provisioner.blueos_api.BlueOSClient")
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
     def test_includes_calibration_when_flagged(self, mock_cls, mock_mavlink, tmp_path):
         mock_cls.return_value = _mock_blueos_client()
         cal_param = next(iter(CALIBRATION_PARAMS))
@@ -106,15 +106,15 @@ class TestDownload:
 
         out = tmp_path / "test.yaml"
         result = runner.invoke(
-            app, ["download", "192.168.2.2", "-o", str(out), "--include-calibration"]
+            app, ["config", "download", "192.168.2.2", "-o", str(out), "--include-calibration"]
         )
         assert result.exit_code == 0, result.output
 
         data = yaml.safe_load(out.read_text())
         assert cal_param in data["autopilot_params"]
 
-    @patch("mower_provisioner.cli.mavlink_connection")
-    @patch("mower_provisioner.blueos_api.BlueOSClient")
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
     def test_default_output_filename(self, mock_cls, mock_mavlink, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         mock_cls.return_value = _mock_blueos_client()
@@ -122,12 +122,12 @@ class TestDownload:
             _make_param_msg("CRUISE_SPEED", 2.0, 0, 1),
         ])
 
-        result = runner.invoke(app, ["download", "blueos.local"])
+        result = runner.invoke(app, ["config", "download", "blueos.local"])
         assert result.exit_code == 0, result.output
         assert (tmp_path / "blueos.local.yaml").exists()
 
-    @patch("mower_provisioner.cli.mavlink_connection")
-    @patch("mower_provisioner.blueos_api.BlueOSClient")
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
     def test_params_are_sorted(self, mock_cls, mock_mavlink, tmp_path):
         mock_cls.return_value = _mock_blueos_client()
         mock_mavlink.return_value = _mock_mavlink_conn([
@@ -137,15 +137,15 @@ class TestDownload:
         ])
 
         out = tmp_path / "test.yaml"
-        result = runner.invoke(app, ["download", "192.168.2.2", "-o", str(out)])
+        result = runner.invoke(app, ["config", "download", "192.168.2.2", "-o", str(out)])
         assert result.exit_code == 0, result.output
 
         data = yaml.safe_load(out.read_text())
         keys = list(data["autopilot_params"].keys())
         assert keys == sorted(keys)
 
-    @patch("mower_provisioner.cli.mavlink_connection")
-    @patch("mower_provisioner.blueos_api.BlueOSClient")
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
     def test_download_includes_mediamtx(self, mock_cls, mock_mavlink, tmp_path):
         mock_cls.return_value = _mock_blueos_client()
         mock_mavlink.return_value = _mock_mavlink_conn([
@@ -153,7 +153,7 @@ class TestDownload:
         ])
 
         out = tmp_path / "test.yaml"
-        result = runner.invoke(app, ["download", "192.168.2.2", "-o", str(out)])
+        result = runner.invoke(app, ["config", "download", "192.168.2.2", "-o", str(out)])
         assert result.exit_code == 0, result.output
 
         data = yaml.safe_load(out.read_text())
@@ -161,8 +161,8 @@ class TestDownload:
         assert "config_path" in data["mediamtx"]
         assert data["mediamtx"]["config"]["logLevel"] == "info"
 
-    @patch("mower_provisioner.cli.mavlink_connection")
-    @patch("mower_provisioner.blueos_api.BlueOSClient")
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
     def test_download_mediamtx_not_found(self, mock_cls, mock_mavlink, tmp_path):
         mock_client = _mock_blueos_client()
         mock_client.get_file.return_value = None  # MediaMTX not found
@@ -172,7 +172,7 @@ class TestDownload:
         ])
 
         out = tmp_path / "test.yaml"
-        result = runner.invoke(app, ["download", "192.168.2.2", "-o", str(out)])
+        result = runner.invoke(app, ["config", "download", "192.168.2.2", "-o", str(out)])
         assert result.exit_code == 0, result.output
 
         data = yaml.safe_load(out.read_text())
@@ -195,9 +195,9 @@ class TestUpload:
             config["autopilot_params"] = params
         path.write_text(yaml.dump(config))
 
-    @patch("mower_provisioner.cli.write_params", return_value=["CRUISE_SPEED", "WP_RADIUS"])
-    @patch("mower_provisioner.cli.mavlink_connection")
-    @patch("mower_provisioner.blueos_api.BlueOSClient")
+    @patch("skynet.cli.write_params", return_value=["CRUISE_SPEED", "WP_RADIUS"])
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
     def test_basic_upload(self, mock_cls, mock_mavlink, mock_write, tmp_path):
         mock_client = _mock_blueos_client()
         mock_cls.return_value = mock_client
@@ -210,7 +210,7 @@ class TestUpload:
         cfg = tmp_path / "config.yaml"
         self._write_config(cfg, params={"CRUISE_SPEED": 2.0, "WP_RADIUS": 3.0})
 
-        result = runner.invoke(app, ["upload", "192.168.2.2", str(cfg), "-y"])
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
         assert result.exit_code == 0, result.output
 
         mock_client.set_hostname.assert_called_once_with("mower-01")
@@ -219,14 +219,14 @@ class TestUpload:
         mock_mavlink.assert_called_once_with("tcp:192.168.2.2:5760")
         mock_write.assert_called_once()
 
-    @patch("mower_provisioner.blueos_api.BlueOSClient")
+    @patch("skynet.blueos_api.BlueOSClient")
     def test_dry_run(self, mock_cls, tmp_path):
         mock_cls.return_value = _mock_blueos_client()
 
         cfg = tmp_path / "config.yaml"
         self._write_config(cfg, params={"CRUISE_SPEED": 2.0})
 
-        result = runner.invoke(app, ["upload", "192.168.2.2", str(cfg), "--dry-run"])
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "--dry-run"])
         assert result.exit_code == 0, result.output
         assert "DRY RUN" in result.output
 
@@ -234,13 +234,13 @@ class TestUpload:
         cfg = tmp_path / "empty.yaml"
         cfg.write_text(yaml.dump({"network": {"hotspot": True}}))
 
-        result = runner.invoke(app, ["upload", "192.168.2.2", str(cfg)])
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg)])
         assert result.exit_code == 0
         assert "Nothing to upload" in result.output
 
-    @patch("mower_provisioner.cli.write_params", return_value=["CRUISE_SPEED"])
-    @patch("mower_provisioner.cli.mavlink_connection")
-    @patch("mower_provisioner.blueos_api.BlueOSClient")
+    @patch("skynet.cli.write_params", return_value=["CRUISE_SPEED"])
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
     def test_filters_calibration(self, mock_cls, mock_mavlink, mock_write, tmp_path):
         mock_cls.return_value = _mock_blueos_client()
 
@@ -253,16 +253,16 @@ class TestUpload:
         cfg = tmp_path / "config.yaml"
         self._write_config(cfg, params={"CRUISE_SPEED": 2.0, cal_param: 0.5})
 
-        result = runner.invoke(app, ["upload", "192.168.2.2", str(cfg), "-y"])
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
         assert result.exit_code == 0, result.output
 
         call_params = mock_write.call_args[0][1]
         assert "CRUISE_SPEED" in call_params
         assert cal_param not in call_params
 
-    @patch("mower_provisioner.cli.write_params", return_value=["CRUISE_SPEED"])
-    @patch("mower_provisioner.cli.mavlink_connection")
-    @patch("mower_provisioner.blueos_api.BlueOSClient")
+    @patch("skynet.cli.write_params", return_value=["CRUISE_SPEED"])
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
     def test_warns_on_setter_failure(self, mock_cls, mock_mavlink, mock_write, tmp_path):
         mock_client = _mock_blueos_client()
         mock_client.set_hostname.return_value = False  # simulate failure
@@ -276,13 +276,13 @@ class TestUpload:
         cfg = tmp_path / "config.yaml"
         self._write_config(cfg, params={"CRUISE_SPEED": 2.0})
 
-        result = runner.invoke(app, ["upload", "192.168.2.2", str(cfg), "-y"])
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
         assert result.exit_code == 0, result.output
         assert "Failed to set hostname" in result.output
 
-    @patch("mower_provisioner.cli.write_params", return_value=["CRUISE_SPEED"])
-    @patch("mower_provisioner.cli.mavlink_connection")
-    @patch("mower_provisioner.blueos_api.BlueOSClient")
+    @patch("skynet.cli.write_params", return_value=["CRUISE_SPEED"])
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
     def test_upload_multiple_bag_entries(self, mock_cls, mock_mavlink, mock_write, tmp_path):
         mock_client = _mock_blueos_client()
         mock_cls.return_value = mock_client
@@ -299,13 +299,13 @@ class TestUpload:
             bag={"ext.cam": {"res": "1080p"}, "ext.gps": {"rate": 10}},
         )
 
-        result = runner.invoke(app, ["upload", "192.168.2.2", str(cfg), "-y"])
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
         assert result.exit_code == 0, result.output
         assert mock_client.set_bag.call_count == 2
 
-    @patch("mower_provisioner.cli.write_params", return_value=["CRUISE_SPEED"])
-    @patch("mower_provisioner.cli.mavlink_connection")
-    @patch("mower_provisioner.blueos_api.BlueOSClient")
+    @patch("skynet.cli.write_params", return_value=["CRUISE_SPEED"])
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
     def test_upload_mediamtx_config(self, mock_cls, mock_mavlink, mock_write, tmp_path):
         mock_client = _mock_blueos_client()
         mock_cls.return_value = mock_client
@@ -328,7 +328,7 @@ class TestUpload:
         }
         cfg.write_text(yaml.dump(config))
 
-        result = runner.invoke(app, ["upload", "192.168.2.2", str(cfg), "-y"])
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
         assert result.exit_code == 0, result.output
         assert "mediamtx config" in result.output
 
@@ -336,9 +336,9 @@ class TestUpload:
         call_path = mock_client.put_file.call_args[0][0]
         assert call_path == "/etc/mediamtx/mediamtx.yml"
 
-    @patch("mower_provisioner.cli.write_params", return_value=["CRUISE_SPEED"])
-    @patch("mower_provisioner.cli.mavlink_connection")
-    @patch("mower_provisioner.blueos_api.BlueOSClient")
+    @patch("skynet.cli.write_params", return_value=["CRUISE_SPEED"])
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
     def test_upload_mediamtx_failure_warns(self, mock_cls, mock_mavlink, mock_write, tmp_path):
         mock_client = _mock_blueos_client()
         mock_client.put_file.return_value = False
@@ -362,6 +362,6 @@ class TestUpload:
         }
         cfg.write_text(yaml.dump(config))
 
-        result = runner.invoke(app, ["upload", "192.168.2.2", str(cfg), "-y"])
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
         assert result.exit_code == 0, result.output
         assert "Failed to push MediaMTX config" in result.output

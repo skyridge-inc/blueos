@@ -1,4 +1,4 @@
-"""End-to-end tests for the `nav-plan` CLI command.
+"""End-to-end tests for the `nav plan` CLI command.
 
 These exercise the full pipeline (KML → contour → waypoint files +
 optional HTML/KML visualizations) without opening any MAVLink or HTTP
@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 import pytest
 from typer.testing import CliRunner
 
-from mower_provisioner.cli import app
+from skynet.cli import app
 
 runner = CliRunner()
 
@@ -39,7 +39,7 @@ def field_kml(tmp_path):
 
 class TestNavPlanCommand:
     def test_minimal_invocation_writes_waypoints(self, field_kml):
-        result = runner.invoke(app, ["nav-plan", str(field_kml), "--width", "21"])
+        result = runner.invoke(app, ["nav", "plan", str(field_kml), "--width", "21"])
         assert result.exit_code == 0, result.stdout + (result.stderr or "")
         # Either single .waypoints file or per-mower files exist
         base = field_kml.with_suffix("")
@@ -51,7 +51,7 @@ class TestNavPlanCommand:
 
     def test_multi_mower_output_naming(self, field_kml):
         # 10m wide, 21" (~0.53m) → ~18 paths
-        result = runner.invoke(app, ["nav-plan", str(field_kml), "--width", "21"])
+        result = runner.invoke(app, ["nav", "plan", str(field_kml), "--width", "21"])
         assert result.exit_code == 0
         per_mower = sorted(field_kml.parent.glob("field_mower*.waypoints"))
         assert len(per_mower) >= 2
@@ -62,7 +62,7 @@ class TestNavPlanCommand:
         custom = tmp_path / "mission.waypoints"
         result = runner.invoke(
             app,
-            ["nav-plan", str(field_kml), "--width", "21", "-o", str(custom)],
+            ["nav", "plan", str(field_kml), "--width", "21", "-o", str(custom)],
         )
         assert result.exit_code == 0
         # Files should be written under "mission" base, not "mission.waypoints"
@@ -72,12 +72,12 @@ class TestNavPlanCommand:
         assert not (tmp_path / "mission.waypoints.waypoints").exists()
 
     def test_missing_width_errors(self, field_kml):
-        result = runner.invoke(app, ["nav-plan", str(field_kml)])
+        result = runner.invoke(app, ["nav", "plan", str(field_kml)])
         assert result.exit_code != 0
 
     def test_visualize_flag_writes_html(self, field_kml):
         result = runner.invoke(
-            app, ["nav-plan", str(field_kml), "--width", "21", "--visualize"]
+            app, ["nav", "plan", str(field_kml), "--width", "21", "--visualize"]
         )
         assert result.exit_code == 0
         viz = field_kml.parent / "field.html"
@@ -86,7 +86,7 @@ class TestNavPlanCommand:
 
     def test_kml_track_flag_writes_track_file(self, field_kml):
         result = runner.invoke(
-            app, ["nav-plan", str(field_kml), "--width", "21", "--kml-track"]
+            app, ["nav", "plan", str(field_kml), "--width", "21", "--kml-track"]
         )
         assert result.exit_code == 0
         track = field_kml.parent / "field_track.kml"
@@ -98,7 +98,7 @@ class TestNavPlanCommand:
 
     def test_kml_tour_flag_writes_tour_file(self, field_kml):
         result = runner.invoke(
-            app, ["nav-plan", str(field_kml), "--width", "21", "--kml-tour"]
+            app, ["nav", "plan", str(field_kml), "--width", "21", "--kml-tour"]
         )
         assert result.exit_code == 0
         tour = field_kml.parent / "field_tour.kml"
@@ -111,7 +111,8 @@ class TestNavPlanCommand:
         result = runner.invoke(
             app,
             [
-                "nav-plan",
+                "nav",
+                "plan",
                 str(field_kml),
                 "--width",
                 "21",

@@ -22,6 +22,22 @@ app = typer.Typer(
     help="MAVLink fleet provisioning CLI for ArduPilot Rover/Mower vehicles.",
     no_args_is_help=True,
 )
+config_app = typer.Typer(
+    help="BlueOS device configuration download and upload.",
+    no_args_is_help=True,
+)
+misc_app = typer.Typer(
+    help="Low-level MAVLink parameter utilities and config extraction.",
+    no_args_is_help=True,
+)
+nav_app = typer.Typer(
+    help="Navigation and mission planning.",
+    no_args_is_help=True,
+)
+app.add_typer(config_app, name="config")
+app.add_typer(misc_app, name="misc")
+app.add_typer(nav_app, name="nav")
+
 console = Console()
 err_console = Console(stderr=True)
 
@@ -63,7 +79,7 @@ def main(
     """MAVLink fleet provisioning for ArduPilot mowers."""
 
 
-@app.command()
+@misc_app.command()
 def connect(
     device: DeviceOption = DEFAULT_DEVICE,
     baud: BaudOption = DEFAULT_BAUD,
@@ -88,7 +104,7 @@ def connect(
     console.print("[green]Connection successful![/green]")
 
 
-@app.command()
+@misc_app.command()
 def read(
     device: DeviceOption = DEFAULT_DEVICE,
     baud: BaudOption = DEFAULT_BAUD,
@@ -128,7 +144,7 @@ def read(
         console.print(table)
 
 
-@app.command()
+@misc_app.command()
 def write(
     param_file: Annotated[Path, typer.Argument(help="Path to .param file.")],
     device: DeviceOption = DEFAULT_DEVICE,
@@ -175,7 +191,7 @@ def write(
     console.print(f"[green]Wrote {len(written)} parameters to {device}.[/green]")
 
 
-@app.command()
+@misc_app.command()
 def diff(
     param_file: Annotated[Path, typer.Argument(help="Path to .param file.")],
     device: DeviceOption = DEFAULT_DEVICE,
@@ -221,7 +237,7 @@ def diff(
     )
 
 
-@app.command()
+@misc_app.command()
 def sync(
     param_file: Annotated[Path, typer.Argument(help="Path to .param file.")],
     device: DeviceOption = DEFAULT_DEVICE,
@@ -287,7 +303,7 @@ def sync(
     console.print(f"[green]Synced {len(written)} parameters to {device}.[/green]")
 
 
-@app.command()
+@misc_app.command()
 def backup(
     device: DeviceOption = DEFAULT_DEVICE,
     baud: BaudOption = DEFAULT_BAUD,
@@ -322,7 +338,7 @@ def backup(
     )
 
 
-@app.command("extract-config")
+@misc_app.command("extract-config")
 def extract_config_cmd(
     url: Annotated[
         str,
@@ -375,7 +391,7 @@ def extract_config_cmd(
 MAVLINK_PORT = 5760
 
 
-@app.command()
+@config_app.command()
 def download(
     host: Annotated[
         str,
@@ -462,7 +478,7 @@ def download(
         err_console.print(f"[yellow]Warning: Could not reach: {', '.join(nulls)}[/yellow]")
 
 
-@app.command()
+@config_app.command()
 def upload(
     host: Annotated[
         str,
@@ -638,7 +654,7 @@ def upload(
     console.print(f"[green]Upload complete: {', '.join(uploaded)}[/green]")
 
 
-@app.command("nav-plan")
+@nav_app.command("plan")
 def nav_plan(
     kml_file: Annotated[
         Path, typer.Argument(help="Path to KML boundary file."),
