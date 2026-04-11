@@ -2,7 +2,7 @@
 
 import pytest
 
-from mower_provisioner.mission_planning import (
+from skynet.mission_planning import (
     extract_spine,
     parse_kml_file,
     to_latlon,

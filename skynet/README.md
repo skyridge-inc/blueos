@@ -29,6 +29,12 @@ mower-provision sync templates/mower_base.param
 
 # Full backup before changes
 mower-provision backup --output-dir backups/
+
+# Plan a mowing mission from a KML field boundary
+skynet nav plan field.kml --width 21
+
+# Upload a .waypoints mission to the autopilot via the BlueOS MAVLink proxy
+skynet nav upload ./output/700_long_mower1.waypoints -d tcp:192.168.2.2:5760 --yes
 ```
 
 ## Commands

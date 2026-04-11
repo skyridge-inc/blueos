@@ -6,14 +6,14 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
-from mower_provisioner.params import (
+from skynet.params import (
     EPSILON,
     ParamDiff,
     diff_params,
     fetch_all_params,
     write_params,
 )
-from mower_provisioner.exceptions import ParameterFetchError, ParameterWriteError
+from skynet.exceptions import ParameterFetchError, ParameterWriteError
 
 
 class TestDiffParams:

@@ -654,6 +654,88 @@ def upload(
     console.print(f"[green]Upload complete: {', '.join(uploaded)}[/green]")
 
 
+@nav_app.command("upload")
+def nav_upload(
+    waypoint_file: Annotated[
+        Path, typer.Argument(help="Path to QGC WPL 110 .waypoints file."),
+    ],
+    device: DeviceOption = DEFAULT_DEVICE,
+    baud: BaudOption = DEFAULT_BAUD,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Show what would be uploaded.")
+    ] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="Skip confirmation.")
+    ] = False,
+) -> None:
+    """Upload a .waypoints mission file to the autopilot via MAVLink.
+
+    Uses the same connection machinery as `misc connect`, so pointing at the
+    BlueOS MAVLink proxy is just `-d tcp:<host>:5760`.
+    """
+    from .exceptions import MissionUploadError, MowerProvisionerError
+    from .mission_planning import read_waypoints
+    from .mission_upload import upload_mission
+
+    try:
+        items = read_waypoints(str(waypoint_file), include_home=True)
+    except (FileNotFoundError, ValueError) as e:
+        err_console.print(f"[red]Failed to read {waypoint_file}: {e}[/red]")
+        raise typer.Exit(1)
+
+    if not items:
+        err_console.print(
+            f"[red]{waypoint_file} contains no waypoints[/red]"
+        )
+        raise typer.Exit(1)
+
+    mission_count = max(len(items) - 1, 0)
+    console.print(
+        f"Loaded [bold]{mission_count}[/bold] waypoints (+ home) from "
+        f"[bold]{waypoint_file}[/bold]"
+    )
+
+    if dry_run:
+        console.print("[yellow]DRY RUN — no MAVLink connection will be opened.[/yellow]")
+        for seq, (lat, lon) in enumerate(items):
+            label = "home" if seq == 0 else f"wp{seq}"
+            console.print(f"  [{seq:3d}] {label}: {lat:.8f}, {lon:.8f}")
+        return
+
+    if not yes:
+        typer.confirm(
+            f"Upload {mission_count} waypoints to {device}?", abort=True
+        )
+
+    try:
+        with mavlink_connection(device, baud=baud) as conn:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task(
+                    "Uploading mission...", total=len(items)
+                )
+
+                def on_progress(written: int, total: int) -> None:
+                    progress.update(task, completed=written)
+
+                upload_mission(conn, items, progress_callback=on_progress)
+    except MissionUploadError as e:
+        err_console.print(f"[red]Mission upload failed: {e}[/red]")
+        raise typer.Exit(1)
+    except MowerProvisionerError as e:
+        err_console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+
+    console.print(
+        f"[green]Uploaded {mission_count} waypoints to {device}.[/green]"
+    )
+
+
 @nav_app.command("plan")
 def nav_plan(
     kml_file: Annotated[

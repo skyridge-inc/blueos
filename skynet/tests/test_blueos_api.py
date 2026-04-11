@@ -6,8 +6,8 @@ import httpx
 import pytest
 import respx
 
-from mower_provisioner.blueos_api import BlueOSClient
-from mower_provisioner.exceptions import BlueOSConnectionError
+from skynet.blueos_api import BlueOSClient
+from skynet.exceptions import BlueOSConnectionError
 
 BASE_URL = "http://blueos.local"
 

@@ -2,7 +2,7 @@
 
 import pytest
 
-from mower_provisioner.mission_planning import read_waypoints, write_waypoints
+from skynet.mission_planning import read_waypoints, write_waypoints
 
 
 class TestWaypoints:

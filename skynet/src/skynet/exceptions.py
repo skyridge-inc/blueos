@@ -35,3 +35,7 @@ class BlueOSError(MowerProvisionerError):
 
 class BlueOSConnectionError(BlueOSError):
     """Cannot reach the BlueOS device."""
+
+
+class MissionUploadError(MowerProvisionerError):
+    """Failed to upload a mission to the autopilot."""

@@ -4,12 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from mower_provisioner.config import (
+from skynet.config import (
     CALIBRATION_PARAMS,
     load_param_file,
     save_param_file,
 )
-from mower_provisioner.exceptions import ParamFileError
+from skynet.exceptions import ParamFileError
 
 
 class TestLoadParamFile:

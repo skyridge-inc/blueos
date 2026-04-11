@@ -1,4 +1,4 @@
-"""Shared fixtures for mower_provisioner tests."""
+"""Shared fixtures for skynet tests."""
 
 from __future__ import annotations
 

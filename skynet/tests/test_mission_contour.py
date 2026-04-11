@@ -2,7 +2,7 @@
 
 import pytest
 
-from mower_provisioner.mission_planning import (
+from skynet.mission_planning import (
     INCHES_TO_METERS,
     generate_contour_paths,
 )

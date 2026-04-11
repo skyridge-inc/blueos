@@ -8,8 +8,8 @@ from unittest.mock import MagicMock
 import pytest
 import yaml
 
-from mower_provisioner.exceptions import ParamFileError
-from mower_provisioner.extract import (
+from skynet.exceptions import ParamFileError
+from skynet.extract import (
     MEDIAMTX_CONFIG_CANDIDATES,
     _BAG_EXCLUDE_KEYS,
     extract_config,

@@ -5,8 +5,8 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from mower_provisioner.mission_planning import generate_kml_track, generate_kml_tour
-from mower_provisioner.mission_planning.kml import GX_NS, KML_NS
+from skynet.mission_planning import generate_kml_track, generate_kml_tour
+from skynet.mission_planning.kml import GX_NS, KML_NS
 
 
 SINGLE_PATH = [(40.0, -80.0), (40.001, -80.0), (40.001, -79.999)]

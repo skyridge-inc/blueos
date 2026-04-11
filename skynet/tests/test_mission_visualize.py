@@ -2,7 +2,7 @@
 
 import pytest
 
-from mower_provisioner.mission_planning import generate_visualization_html
+from skynet.mission_planning import generate_visualization_html
 
 
 SINGLE_PATH = [(40.0, -80.0), (40.001, -80.0), (40.001, -79.999)]
