@@ -70,17 +70,17 @@ def upload_mission(
         msg_type = msg.get_type()
 
         if msg_type == "MISSION_ACK":
-            # Premature ack before we finished — treat as failure.
             result = msg.type
             if result != mavutil.mavlink.MAV_MISSION_ACCEPTED:
                 raise MissionUploadError(
                     f"Mission rejected early at seq {last_seq}: "
                     f"MAV_MISSION_RESULT={result}"
                 )
-            raise MissionUploadError(
-                f"Unexpected early MISSION_ACK(ACCEPTED) after seq {last_seq}, "
-                f"expected {total - len(sent)} more items"
-            )
+            # Autopilot ACCEPTED the mission before we sent every seq.
+            # Some ArduPilot versions (e.g. 4.6) skip seq 0 (the home row)
+            # during upload and ACK after receiving seqs 1..N-1. Trust
+            # the autopilot's acceptance and return success.
+            return
 
         # MISSION_REQUEST or MISSION_REQUEST_INT
         seq = msg.seq

@@ -114,6 +114,40 @@ class TestUploadMission:
         with pytest.raises(MissionUploadError, match="seq 1"):
             upload_mission(conn, items)
 
+    def test_early_ack_accepted_counts_as_success(self):
+        """ArduPilot 4.6+ sometimes ACKs after seqs 1..N-1 without
+        requesting seq 0 (the home row). An ACCEPTED ack mid-upload
+        should be treated as success, not a premature-ack error."""
+        items = [(40.0, -80.0), (40.001, -80.0), (40.002, -80.0)]  # 3 items
+        # Autopilot requests only seqs 1 and 2 (skipping seq 0), then ACKs.
+        conn = _fake_conn(
+            [
+                _make_request(1),
+                _make_request(2),
+                _make_ack(mavutil.mavlink.MAV_MISSION_ACCEPTED),
+            ]
+        )
+        # Must not raise.
+        upload_mission(conn, items)
+        # Only 2 items should have been sent (seqs 1 and 2).
+        assert conn.mav.mission_item_int_send.call_count == 2
+        sent_seqs = [
+            c.args[2] for c in conn.mav.mission_item_int_send.call_args_list
+        ]
+        assert sent_seqs == [1, 2]
+
+    def test_early_ack_error_still_raises(self):
+        """A non-ACCEPTED early ack is still a failure."""
+        items = [(40.0, -80.0), (40.001, -80.0), (40.002, -80.0)]
+        conn = _fake_conn(
+            [
+                _make_request(0),
+                _make_ack(mavutil.mavlink.MAV_MISSION_ERROR),
+            ]
+        )
+        with pytest.raises(MissionUploadError, match="rejected early"):
+            upload_mission(conn, items)
+
     def test_legacy_mission_request_accepted(self):
         items = [(40.0, -80.0), (40.001, -80.0)]
         conn = _fake_conn(

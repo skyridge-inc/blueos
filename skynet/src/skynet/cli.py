@@ -672,19 +672,35 @@ def nav_sim(
     track_width: Annotated[
         float,
         typer.Option(
-            "--track-width", help="Skid-steer track width in meters."
+            "--track-width", help="Track width (skid-steer) or wheelbase (Ackermann) in meters."
         ),
     ] = 0.5,
+    max_steer_angle: Annotated[
+        float,
+        typer.Option(
+            "--max-steer-angle", help="Max steering angle in degrees (Ackermann only)."
+        ),
+    ] = 30.0,
     duration: Annotated[
         Optional[float],
         typer.Option("--duration", help="Wall-clock safety timeout (s)."),
     ] = None,
     start_seq: Annotated[
         int,
-        typer.Option("--start-seq", help="Mission seq to spawn at."),
+        typer.Option(
+            "--start-seq",
+            help=(
+                "Mission seq to spawn the rover at. The first waypoint "
+                "driven toward will be start_seq + 1 so the rover has "
+                "a non-zero distance to travel."
+            ),
+        ),
     ] = 1,
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Print plan and exit.")
+    ] = False,
+    verbose: Annotated[
+        bool, typer.Option("--verbose", "-v", help="Print per-tick telemetry.")
     ] = False,
     yes: Annotated[
         bool, typer.Option("--yes", "-y", help="Skip confirmation.")
@@ -701,6 +717,8 @@ def nav_sim(
     Uses the same connection machinery as `misc connect`, so pointing at the
     BlueOS MAVLink proxy is just `-d tcp:<host>:5760`.
     """
+    import select as _select
+    import sys as _sys
     import time as _time
 
     from .exceptions import (
@@ -710,43 +728,100 @@ def nav_sim(
         MowerProvisionerError,
     )
     from .gps_sim import (
+        DRIVE_ACKERMANN,
+        DRIVE_SKID_STEER,
         MPH_TO_MPS,
-        SIM_PARAMS,
+        AckermannModel,
         GpsInputEmitter,
         ServoNormalizer,
         SimParamContext,
         SkidSteerModel,
         StopWatcher,
+        detect_drive_type,
+        STATUSTEXT_SEVERITY_WARNING,
+        deduplicate_mission,
+        offset_spawn_behind_waypoint,
+        read_autopilot_yaw,
+        reboot_autopilot,
+        request_diagnostic_streams,
         request_servo_output_stream,
+        resolve_sim_params,
+        rover_mode_name,
+        set_current_mission_seq,
+        set_rover_mode,
+        set_target_groundspeed,
+        severity_label,
         sidecar_path,
-        validate_skid_steer,
+        start_mission,
         wait_for_servo_output,
+        warn_on_zero_speed_params,
     )
+
+    ROVER_MODE_AUTO = 10
     from .mission_download import download_mission
+    from .mission_upload import upload_mission
     from .params import fetch_all_params
+
+    REBOOT_WAIT = 8  # seconds to wait for autopilot reboot
 
     max_speed_mps = ground_speed * MPH_TO_MPS
 
-    # Refuse upfront if sidecar exists — before even opening a connection.
     sidecar = sidecar_path(device)
     if sidecar.exists():
-        err_console.print(
-            f"[red]Leftover sidecar file detected: {sidecar}[/red]\n"
-            f"[red]A previous `skynet nav sim` run likely crashed. "
-            f"Restore the autopilot with:[/red]\n"
-            f"  [bold]skynet misc write {sidecar} --yes --include-calibration[/bold]\n"
-            f"[red]Then delete the sidecar and retry.[/red]"
+        console.print(
+            f"[yellow]Leftover sidecar found at {sidecar} — "
+            f"its contents will be used as the originals and the file "
+            f"will be cleared before starting.[/yellow]"
         )
-        raise typer.Exit(1)
 
     try:
+        # ── Phase 1: validate frame, download mission, write sim params, reboot ──
         with mavlink_connection(device, baud=baud) as conn:
+            with console.status("Reading frame and servo params..."):
+                all_params = fetch_all_params(conn)
+            drive_type = detect_drive_type(all_params)
+            if drive_type == DRIVE_SKID_STEER:
+                console.print(
+                    "[green]Frame OK:[/green] skid-steer "
+                    "(SERVO1=ThrottleLeft, SERVO3=ThrottleRight)"
+                )
+            else:
+                console.print(
+                    "[green]Frame OK:[/green] Ackermann "
+                    "(SERVO1=GroundSteering, SERVO3=Throttle)"
+                )
+
+            # Log autopilot speed params so we can see if any are zero
+            # (which would silently prevent any throttle command).
+            def _speed_warn(line: str) -> None:
+                err_console.print(f"[yellow]Warning: {line}[/yellow]")
+
+            speed_zeros = warn_on_zero_speed_params(all_params, _speed_warn)
+            for name in ("CRUISE_SPEED", "CRUISE_THROTTLE", "WP_SPEED"):
+                if name in all_params:
+                    console.print(
+                        f"  {name} = {all_params[name]}"
+                    )
+
             with console.status("Downloading mission from autopilot..."):
-                mission = download_mission(conn)
+                raw_mission = download_mission(conn)
             console.print(
-                f"Downloaded [bold]{len(mission) - 1}[/bold] waypoints "
+                f"Downloaded [bold]{len(raw_mission) - 1}[/bold] waypoints "
                 f"(+ home) from autopilot"
             )
+
+            # Remove consecutive duplicate waypoints. `nav_plan` sets
+            # home = first path vertex, which usually equals mission[1].
+            # That zero-length segment jams ArduRover's L1 nav controller
+            # and prevents the rover from ever driving.
+            mission = deduplicate_mission(raw_mission)
+            if len(mission) < len(raw_mission):
+                dropped = len(raw_mission) - len(mission)
+                console.print(
+                    f"[yellow]Deduplicated mission: removed {dropped} "
+                    f"consecutive duplicate waypoint(s). "
+                    f"{len(mission) - 1} unique waypoints remain.[/yellow]"
+                )
 
             if start_seq < 1 or start_seq >= len(mission):
                 err_console.print(
@@ -755,24 +830,33 @@ def nav_sim(
                 )
                 raise typer.Exit(1)
 
-            with console.status("Reading frame and servo params..."):
-                all_params = fetch_all_params(conn)
-            validate_skid_steer(all_params)
-            console.print(
-                "[green]Frame OK:[/green] skid-steer rover "
-                "(SERVO1=ThrottleLeft, SERVO3=ThrottleRight)"
-            )
-
-            start_lat, start_lon = mission[start_seq]
+            # Spawn ~5 m behind the target waypoint so wp_dist > 0 at mission
+            # start. ArduRover's waypoint-reached logic is hysteretic: it
+            # only fires on a transition from distance > WP_RADIUS to below
+            # it. Spawning AT the waypoint means that transition never
+            # happens and the mission is frozen.
             last_seq = len(mission) - 1
+            target_lat, target_lon = mission[start_seq]
+            if start_seq + 1 <= last_seq:
+                next_lat, next_lon = mission[start_seq + 1]
+            else:
+                next_lat, next_lon = target_lat, target_lon
+            start_lat, start_lon = offset_spawn_behind_waypoint(
+                target_lat, target_lon, next_lat, next_lon, distance_m=5.0
+            )
 
             table = Table(title="Sim config")
             table.add_column("Setting", style="bold")
             table.add_column("Value")
             table.add_row("Device", device)
+            table.add_row("Drive type", drive_type)
             table.add_row("Ground speed", f"{ground_speed} mph ({max_speed_mps:.4f} m/s)")
             table.add_row("Rate", f"{rate} Hz")
-            table.add_row("Track width", f"{track_width} m")
+            if drive_type == DRIVE_SKID_STEER:
+                table.add_row("Track width", f"{track_width} m")
+            else:
+                table.add_row("Wheelbase", f"{track_width} m")
+                table.add_row("Max steer angle", f"{max_steer_angle}°")
             table.add_row("Start seq", str(start_seq))
             table.add_row("Start lat/lon", f"{start_lat:.8f}, {start_lon:.8f}")
             table.add_row("Last mission seq", str(last_seq))
@@ -780,8 +864,9 @@ def nav_sim(
             console.print(table)
 
             if dry_run:
+                resolved = resolve_sim_params(all_params)
                 console.print("[yellow]DRY RUN — param diff that would be applied:[/yellow]")
-                for name, sim_val in sorted(SIM_PARAMS.items()):
+                for name, sim_val in sorted(resolved.items()):
                     current = all_params.get(name, "—")
                     console.print(f"  {name}: {current} → {sim_val}")
                 console.print("[yellow]DRY RUN — no GPS_INPUT sent, no params written.[/yellow]")
@@ -789,23 +874,82 @@ def nav_sim(
 
             if not yes:
                 typer.confirm(
-                    f"Apply sim param overrides to {device} and start the loop?",
+                    f"Apply sim param overrides to {device}, reboot autopilot, and start?",
                     abort=True,
                 )
 
-            left_norm = ServoNormalizer(1, all_params)
-            right_norm = ServoNormalizer(3, all_params)
-            model = SkidSteerModel(
-                start_lat=start_lat,
-                start_lon=start_lon,
-                max_speed_mps=max_speed_mps,
-                track_width_m=track_width,
+            servo1_norm = ServoNormalizer(1, all_params)
+            servo3_norm = ServoNormalizer(3, all_params)
+
+            # Write sim params + sidecar (SimParamContext.__enter__).
+            # We enter the context here but don't exit until phase 2.
+            sim_ctx = SimParamContext(conn, device)
+            sim_ctx.__enter__()
+
+            # GPS_TYPE requires a reboot to take effect.
+            console.print("[bold]Rebooting autopilot for GPS_TYPE change...[/bold]")
+            reboot_autopilot(conn)
+
+        # Connection is dead after reboot — wait for autopilot to come back.
+        with console.status(
+            f"Waiting {REBOOT_WAIT}s for autopilot reboot..."
+        ):
+            _time.sleep(REBOOT_WAIT)
+
+        # ── Phase 2: reconnect and run the sim loop ──
+        with mavlink_connection(device, baud=baud, timeout=30.0) as conn:
+            console.print("[green]Reconnected after reboot.[/green]")
+
+            # Update the SimParamContext's conn so __exit__ restores via
+            # the live connection.
+            sim_ctx.conn = conn
+
+            # Re-upload the mission. QGC (if connected) will sync its
+            # own mission state to the autopilot after the reboot,
+            # potentially wiping our 6-WP mission with its own. By
+            # re-uploading we ensure the autopilot has the correct
+            # mission when AUTO starts.
+            with console.status("Restoring mission after reboot..."):
+                upload_mission(conn, mission)
+            console.print(
+                f"[green]Mission restored:[/green] {len(mission) - 1} "
+                "waypoints + home"
             )
 
-            with SimParamContext(conn, device):
+            try:
+                # Read the autopilot's current EKF yaw so the sim starts
+                # aligned with it. Without this, GPS_INPUT.yaw would
+                # disagree with the IMU-aligned yaw and the EKF would
+                # reject the fix on the first tick.
+                with console.status("Reading autopilot attitude..."):
+                    start_heading = read_autopilot_yaw(conn)
+                console.print(
+                    f"[green]Start heading:[/green] {start_heading:.1f}° "
+                    "(from autopilot ATTITUDE)"
+                )
+
+                if drive_type == DRIVE_SKID_STEER:
+                    model = SkidSteerModel(
+                        start_lat=start_lat,
+                        start_lon=start_lon,
+                        start_heading_deg=start_heading,
+                        max_speed_mps=max_speed_mps,
+                        track_width_m=track_width,
+                    )
+                else:
+                    model = AckermannModel(
+                        start_lat=start_lat,
+                        start_lon=start_lon,
+                        start_heading_deg=start_heading,
+                        max_speed_mps=max_speed_mps,
+                        wheelbase_m=track_width,
+                        max_steer_angle_deg=max_steer_angle,
+                    )
+
                 request_servo_output_stream(conn, rate_hz=10.0)
+                request_diagnostic_streams(conn)
                 with console.status("Waiting for SERVO_OUTPUT_RAW..."):
-                    first = wait_for_servo_output(conn, timeout=2.0)
+                    first = wait_for_servo_output(conn, timeout=5.0)
 
                 emitter = GpsInputEmitter(conn, model, rate_hz=float(rate))
                 watcher_cm = StopWatcher(
@@ -816,40 +960,231 @@ def nav_sim(
                 last_servo1 = float(first.servo1_raw)
                 last_servo3 = float(first.servo3_raw)
                 armed_banner_printed = False
+                mission_started = False
+                last_custom_mode: int | None = None
+                last_mission_seq: int | None = None
+                last_nav_log_monotonic = 0.0
+                loop_start = _time.monotonic()
+                tick_count = 0
 
                 with watcher_cm as watcher:
                     console.print(
                         "[green]Sim running. Arm in AUTO via GCS to begin.[/green]"
                     )
+                    console.print(
+                        "[dim]Type [bold]q[/bold] or [bold]:q[/bold] + Enter "
+                        "to quit, or press Ctrl+C.[/dim]"
+                    )
+
+                    def _check_quit_key() -> bool:
+                        """Return True if the user typed q/:q on stdin."""
+                        try:
+                            if not _sys.stdin.isatty():
+                                return False
+                            ready, _, _ = _select.select([_sys.stdin], [], [], 0)
+                            if not ready:
+                                return False
+                            line = _sys.stdin.readline().strip()
+                            return line.lower() in ("q", ":q", "quit", ":quit")
+                        except (OSError, ValueError):
+                            return False
+
                     try:
                         while not watcher.should_stop:
                             tick_start = _time.monotonic()
 
-                            # Drain inbox for state updates.
+                            if _check_quit_key():
+                                watcher.trip("user quit (q)")
+                                break
+
                             while True:
                                 msg = conn.recv_match(blocking=False)
                                 if msg is None:
                                     break
                                 t = msg.get_type()
-                                if t == "SERVO_OUTPUT_RAW":
+                                src_sys = msg.get_srcSystem()
+                                src_comp = msg.get_srcComponent()
+                                from_autopilot = (
+                                    src_sys == conn.target_system
+                                    and src_comp == conn.target_component
+                                )
+                                if t == "SERVO_OUTPUT_RAW" and from_autopilot:
                                     last_servo1 = float(msg.servo1_raw)
                                     last_servo3 = float(msg.servo3_raw)
                                 elif t == "HEARTBEAT":
-                                    watcher.observe_heartbeat(msg.base_mode)
-                                elif t == "MISSION_ITEM_REACHED":
+                                    # Only the autopilot's heartbeat counts.
+                                    # BlueOS services and QGC also broadcast
+                                    # heartbeats through this proxy with
+                                    # autopilot=MAV_AUTOPILOT_INVALID (8).
+                                    from pymavlink import mavutil as _mavutil
+                                    is_autopilot_hb = (
+                                        from_autopilot
+                                        and msg.autopilot
+                                        != _mavutil.mavlink.MAV_AUTOPILOT_INVALID
+                                    )
+                                    if is_autopilot_hb:
+                                        watcher.observe_heartbeat(msg.base_mode)
+                                        if msg.custom_mode != last_custom_mode:
+                                            last_custom_mode = msg.custom_mode
+                                            console.print(
+                                                f"[cyan]Flight mode: "
+                                                f"{rover_mode_name(msg.custom_mode)}[/cyan]"
+                                            )
+                                elif t == "MISSION_ITEM_REACHED" and from_autopilot:
+                                    console.print(
+                                        f"[cyan]Reached waypoint {msg.seq}[/cyan]"
+                                    )
                                     watcher.observe_mission_reached(msg.seq)
+                                elif t == "MISSION_CURRENT" and from_autopilot:
+                                    if msg.seq != last_mission_seq:
+                                        last_mission_seq = msg.seq
+                                        console.print(
+                                            f"[cyan]Mission current seq: "
+                                            f"{msg.seq}[/cyan]"
+                                        )
+                                elif t == "NAV_CONTROLLER_OUTPUT" and from_autopilot:
+                                    # Rate-limit to once per 2 seconds so
+                                    # verbose output stays readable.
+                                    now_m = _time.monotonic()
+                                    if now_m - last_nav_log_monotonic > 2.0:
+                                        last_nav_log_monotonic = now_m
+                                        console.print(
+                                            f"[dim]nav: wp_dist={msg.wp_dist}m "
+                                            f"target_bearing={msg.target_bearing}° "
+                                            f"xtrack_err={msg.xtrack_error:.2f}m "
+                                            f"nav_bearing={msg.nav_bearing}°[/dim]"
+                                        )
+                                elif t == "VFR_HUD" and from_autopilot:
+                                    now_m = _time.monotonic()
+                                    if now_m - last_nav_log_monotonic > 2.0:
+                                        console.print(
+                                            f"[dim]vfr: groundspeed={msg.groundspeed:.2f}m/s "
+                                            f"throttle={msg.throttle}% "
+                                            f"airspeed={msg.airspeed:.2f}m/s[/dim]"
+                                        )
+                                elif t == "GLOBAL_POSITION_INT" and from_autopilot:
+                                    now_m = _time.monotonic()
+                                    if now_m - last_nav_log_monotonic > 2.0:
+                                        ap_lat = msg.lat / 1e7
+                                        ap_lon = msg.lon / 1e7
+                                        console.print(
+                                            f"[dim]ap_pos: lat={ap_lat:.8f} "
+                                            f"lon={ap_lon:.8f} "
+                                            f"hdg={msg.hdg / 100.0:.1f}°[/dim]"
+                                        )
+                                elif t == "STATUSTEXT":
+                                    # Always show warnings+ from anything
+                                    # on the bus. ArduPilot uses these to
+                                    # surface EKF rejections, arming
+                                    # inhibits, etc. Strip trailing NUL.
+                                    text = msg.text
+                                    if isinstance(text, bytes):
+                                        text = text.decode("utf-8", errors="replace")
+                                    text = text.rstrip("\x00").strip()
+                                    sev = msg.severity
+                                    if sev <= STATUSTEXT_SEVERITY_WARNING:
+                                        console.print(
+                                            f"[red]autopilot "
+                                            f"[{severity_label(sev)}]: "
+                                            f"{text}[/red]"
+                                        )
+                                elif t == "EKF_STATUS_REPORT" and from_autopilot:
+                                    now_m = _time.monotonic()
+                                    if now_m - last_nav_log_monotonic > 2.0:
+                                        # Report innovations that could
+                                        # indicate silent EKF rejection.
+                                        console.print(
+                                            f"[dim]ekf: vel_var={msg.velocity_variance:.2f} "
+                                            f"pos_horiz_var={msg.pos_horiz_variance:.2f} "
+                                            f"pos_vert_var={msg.pos_vert_variance:.2f} "
+                                            f"compass_var={msg.compass_variance:.2f} "
+                                            f"flags={msg.flags}[/dim]"
+                                        )
 
-                            left = left_norm.normalize(last_servo1)
-                            right = right_norm.normalize(last_servo3)
-                            _lat, _lon, _hdg, vn, ve = model.step(dt, left, right)
+                            s1 = servo1_norm.normalize(last_servo1)
+                            s3 = servo3_norm.normalize(last_servo3)
+                            _lat, _lon, _hdg, vn, ve = model.step(dt, s1, s3)
+                            spd = (vn**2 + ve**2) ** 0.5
                             emitter.set_velocity(vn, ve)
                             emitter.emit()
+                            tick_count += 1
 
                             if watcher.armed_latch and not armed_banner_printed:
                                 console.print(
                                     "[green]GPS lock established. Autopilot is armed.[/green]"
                                 )
                                 armed_banner_printed = True
+
+                            # Once armed, force AUTO mode and kick off
+                            # the mission. The autopilot sometimes reverts
+                            # to MANUAL after a reboot regardless of what
+                            # QGroundControl's UI shows, and arming in
+                            # MANUAL means the rover never navigates.
+                            #
+                            # We target start_seq itself: the sim is
+                            # spawned ~5 m behind it so wp_dist > 0.
+                            if watcher.armed_latch and not mission_started:
+                                set_rover_mode(conn, ROVER_MODE_AUTO)
+                                set_current_mission_seq(conn, start_seq)
+                                start_mission(conn)
+                                # Force a target groundspeed so the rover
+                                # drives even if the vehicle's CRUISE_SPEED
+                                # / WP_SPEED are zero or misconfigured.
+                                set_target_groundspeed(conn, max_speed_mps)
+                                console.print(
+                                    f"[cyan]Forced mode=AUTO, MISSION_START "
+                                    f"sent, current seq={start_seq}, "
+                                    f"target groundspeed="
+                                    f"{max_speed_mps:.2f} m/s[/cyan]"
+                                )
+                                mission_started = True
+
+                            # If the autopilot drifts back to MANUAL after
+                            # arming (e.g. RC failsafe kicks it out of AUTO),
+                            # put it back in AUTO so the mission resumes.
+                            if (
+                                mission_started
+                                and last_custom_mode is not None
+                                and last_custom_mode != ROVER_MODE_AUTO
+                            ):
+                                set_rover_mode(conn, ROVER_MODE_AUTO)
+                            elif not watcher.armed_latch and armed_banner_printed:
+                                console.print(
+                                    "[yellow]Transient disarm — EKF may still be converging. "
+                                    "Waiting for re-arm...[/yellow]"
+                                )
+                                armed_banner_printed = False
+
+                            if verbose:
+                                sim_t = tick_start - loop_start
+                                if drive_type == DRIVE_SKID_STEER:
+                                    servo_str = (
+                                        f"L={s1:+.2f}({int(last_servo1)})  "
+                                        f"R={s3:+.2f}({int(last_servo3)})"
+                                    )
+                                else:
+                                    servo_str = (
+                                        f"STR={s1:+.2f}({int(last_servo1)})  "
+                                        f"THR={s3:+.2f}({int(last_servo3)})"
+                                    )
+                                mode_str = (
+                                    rover_mode_name(last_custom_mode)
+                                    if last_custom_mode is not None
+                                    else "?"
+                                )
+                                console.print(
+                                    f"t={sim_t:6.1f}  "
+                                    f"mode={mode_str:<6}  "
+                                    f"lat={_lat:.8f}  lon={_lon:.8f}  "
+                                    f"hdg={_hdg:05.1f}\u00b0  "
+                                    f"spd={spd:.2f}m/s  "
+                                    f"{servo_str}"
+                                )
+
+                            if watcher.stop_reason == "DISARM":
+                                console.print(
+                                    "[yellow]Autopilot disarmed.[/yellow]"
+                                )
 
                             watcher.check_duration()
 
@@ -863,6 +1198,14 @@ def nav_sim(
                 console.print(
                     f"[green]Sim stopped: {watcher.stop_reason or 'clean exit'}[/green]"
                 )
+            finally:
+                # Restore original params and reboot to re-enable real GPS.
+                console.print("[bold]Restoring original params...[/bold]")
+                sim_ctx.__exit__(None, None, None)
+                console.print(
+                    "[bold]Rebooting autopilot to restore GPS driver...[/bold]"
+                )
+                reboot_autopilot(conn)
 
     except (
         MissionDownloadError,

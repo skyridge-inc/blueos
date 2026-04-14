@@ -45,15 +45,33 @@ def mavlink_connection(
     except Exception as e:
         raise ConnectionError(f"Cannot open {device}: {e}") from e
 
-    msg = conn.wait_heartbeat(timeout=timeout)
-    if msg is None:
+    # Wait specifically for a heartbeat from a real autopilot, ignoring
+    # GCS/BlueOS-service heartbeats that share the same system id on the
+    # BlueOS MAVLink proxy. A real autopilot has
+    # MAV_AUTOPILOT_INVALID (8) only when it's a GCS/relay — filter those
+    # out so conn.target_component is set to the autopilot's component.
+    import time as _t
+    deadline = _t.monotonic() + timeout
+    autopilot_msg = None
+    while _t.monotonic() < deadline:
+        remaining = deadline - _t.monotonic()
+        msg = conn.wait_heartbeat(timeout=max(remaining, 0.1))
+        if msg is None:
+            continue
+        if msg.autopilot == mavutil.mavlink.MAV_AUTOPILOT_INVALID:
+            # GCS / proxy / companion — not the real autopilot.
+            continue
+        autopilot_msg = msg
+        break
+
+    if autopilot_msg is None:
         conn.close()
         raise HeartbeatTimeout(
-            f"No heartbeat from {device} within {timeout}s"
+            f"No autopilot heartbeat from {device} within {timeout}s"
         )
 
-    conn.target_system = msg.get_srcSystem()
-    conn.target_component = msg.get_srcComponent()
+    conn.target_system = autopilot_msg.get_srcSystem()
+    conn.target_component = autopilot_msg.get_srcComponent()
 
     try:
         yield conn
