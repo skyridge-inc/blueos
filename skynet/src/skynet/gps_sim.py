@@ -441,13 +441,18 @@ class SimParamContext:
 
 
 class GpsInputEmitter:
-    """Emits GPS_INPUT messages at a configured rate from a SkidSteerModel."""
+    """Emits GPS_INPUT messages at a configured rate from a SkidSteerModel.
+
+    Tracks `emit_count` so the main loop can report the *actual* achieved
+    send rate — which can diverge from the configured rate when the
+    TCP tunnel back-pressures or the sim's tick loop falls behind.
+    """
 
     def __init__(
         self,
         conn: Any,
         model: SkidSteerModel,
-        rate_hz: float = 5.0,
+        rate_hz: float = 15.0,
     ) -> None:
         self.conn = conn
         self.model = model
@@ -461,6 +466,7 @@ class GpsInputEmitter:
         self._start_ns = time.monotonic_ns()
         self._last_vn = 0.0
         self._last_ve = 0.0
+        self.emit_count = 0
 
     def set_velocity(self, vn: float, ve: float) -> None:
         self._last_vn = vn
@@ -517,6 +523,7 @@ class GpsInputEmitter:
             20,   # satellites_visible
             yaw_cdeg,
         )
+        self.emit_count += 1
 
 
 # -------------------- VisionPositionEmitter --------------------
@@ -734,6 +741,18 @@ def request_diagnostic_streams(conn: Any) -> None:
       checking EKF trust of our GPS_INPUT)
     - EKF_STATUS_REPORT: innovations and flags — reveals silent EKF
       rejection of GPS yaw or other data
+    - GPS_RAW_INT: AP_GPS_MAV driver's reported fix_type. When
+      AR_AttitudeControl::get_forward_speed falls back from
+      ahrs.get_velocity_NED(), it checks `AP::gps().status() >= FIX_3D`.
+      This message reveals whether the driver considers itself to have a
+      3D fix despite us injecting RTK_FIXED in GPS_INPUT.
+    - LOCAL_POSITION_NED: EKF velocity (vx, vy) and position (x, y).
+      If vx/vy are published, ahrs.get_velocity_NED() is returning true.
+      If the message never arrives or is stale, the EKF is not
+      publishing velocity and AR_WPNav's early-return guard #4 fires.
+    - SYS_STATUS: onboard_control_sensors_health bits. GPS sensor-health
+      bit shows whether the autopilot considers GPS healthy from its
+      own perspective (distinct from the fix_type).
     """
     for msg_id in (
         mavutil.mavlink.MAVLINK_MSG_ID_MISSION_CURRENT,
@@ -741,8 +760,37 @@ def request_diagnostic_streams(conn: Any) -> None:
         mavutil.mavlink.MAVLINK_MSG_ID_VFR_HUD,
         mavutil.mavlink.MAVLINK_MSG_ID_GLOBAL_POSITION_INT,
         mavutil.mavlink.MAVLINK_MSG_ID_EKF_STATUS_REPORT,
+        mavutil.mavlink.MAVLINK_MSG_ID_GPS_RAW_INT,
+        mavutil.mavlink.MAVLINK_MSG_ID_LOCAL_POSITION_NED,
+        mavutil.mavlink.MAVLINK_MSG_ID_SYS_STATUS,
     ):
         _set_message_interval(conn, msg_id, 1.0)
+
+
+# MAV_GPS_FIX_TYPE values (MAVLink GPS_FIX_TYPE enum).
+GPS_FIX_LABELS: dict[int, str] = {
+    0: "NO_GPS",
+    1: "NO_FIX",
+    2: "2D",
+    3: "3D",
+    4: "DGPS",
+    5: "RTK_FLOAT",
+    6: "RTK_FIXED",
+    7: "STATIC",
+    8: "PPP",
+}
+
+
+def gps_fix_label(fix_type: int) -> str:
+    return GPS_FIX_LABELS.get(int(fix_type), f"fix{fix_type}")
+
+
+# Bit masks for SYS_STATUS.onboard_control_sensors_health. Values from
+# MAV_SYS_STATUS_SENSOR enum. These are the subset relevant to the
+# AR_WPNav guards — GPS for the fix-fallback path in get_forward_speed,
+# AHRS for get_velocity_NED / get_location.
+SYS_STATUS_SENSOR_GPS = 1 << 5        # 0x20 — MAV_SYS_STATUS_SENSOR_GPS
+SYS_STATUS_SENSOR_AHRS = 1 << 12      # 0x1000 — MAV_SYS_STATUS_SENSOR_AHRS
 
 
 # MAV_SEVERITY levels. STATUSTEXT with severity <= WARNING (4) is

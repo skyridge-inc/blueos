@@ -724,13 +724,25 @@ class TestStreamRequests:
         assert args[5] == 100_000.0
 
     def test_request_diagnostic_streams_subscribes_all(self):
-        """request_diagnostic_streams must subscribe to 5 streams at 1 Hz:
-        MISSION_CURRENT, NAV_CONTROLLER_OUTPUT, VFR_HUD,
-        GLOBAL_POSITION_INT, EKF_STATUS_REPORT.
+        """request_diagnostic_streams must subscribe to the full diagnostic
+        set at 1 Hz each. The GPS_RAW_INT / LOCAL_POSITION_NED / SYS_STATUS
+        entries were added to pin down which AR_WPNav::update() guard fails
+        when the rover refuses to move in AUTO — see docs/SIM_AUTOPILOT_ISSUE.md.
         """
+        expected = {
+            mavutil.mavlink.MAVLINK_MSG_ID_MISSION_CURRENT,
+            mavutil.mavlink.MAVLINK_MSG_ID_NAV_CONTROLLER_OUTPUT,
+            mavutil.mavlink.MAVLINK_MSG_ID_VFR_HUD,
+            mavutil.mavlink.MAVLINK_MSG_ID_GLOBAL_POSITION_INT,
+            mavutil.mavlink.MAVLINK_MSG_ID_EKF_STATUS_REPORT,
+            mavutil.mavlink.MAVLINK_MSG_ID_GPS_RAW_INT,
+            mavutil.mavlink.MAVLINK_MSG_ID_LOCAL_POSITION_NED,
+            mavutil.mavlink.MAVLINK_MSG_ID_SYS_STATUS,
+        }
+
         conn = self._conn()
         request_diagnostic_streams(conn)
-        assert conn.mav.command_long_send.call_count == 5
+        assert conn.mav.command_long_send.call_count == len(expected)
 
         requested_msg_ids = set()
         for call in conn.mav.command_long_send.call_args_list:
@@ -743,13 +755,7 @@ class TestStreamRequests:
             )
             requested_msg_ids.add(msg_id)
 
-        assert requested_msg_ids == {
-            mavutil.mavlink.MAVLINK_MSG_ID_MISSION_CURRENT,
-            mavutil.mavlink.MAVLINK_MSG_ID_NAV_CONTROLLER_OUTPUT,
-            mavutil.mavlink.MAVLINK_MSG_ID_VFR_HUD,
-            mavutil.mavlink.MAVLINK_MSG_ID_GLOBAL_POSITION_INT,
-            mavutil.mavlink.MAVLINK_MSG_ID_EKF_STATUS_REPORT,
-        }
+        assert requested_msg_ids == expected
 
 
 class TestDeduplicateMission:

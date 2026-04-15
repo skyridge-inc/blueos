@@ -667,8 +667,16 @@ def nav_sim(
     ] = 2.0,
     rate: Annotated[
         int,
-        typer.Option("--rate", help="GPS_INPUT emit rate in Hz (1-20)."),
-    ] = 5,
+        typer.Option(
+            "--rate",
+            help=(
+                "GPS_INPUT emit rate in Hz (1-20). Default 15 Hz to keep "
+                "the autopilot's AHRS origin-relative position getter "
+                "fresh; rates as low as 5 Hz were observed to suppress "
+                "LOCAL_POSITION_NED ≥90% of the time and freeze AUTO."
+            ),
+        ),
+    ] = 15,
     track_width: Annotated[
         float,
         typer.Option(
@@ -740,8 +748,11 @@ def nav_sim(
         StopWatcher,
         detect_drive_type,
         STATUSTEXT_SEVERITY_WARNING,
+        SYS_STATUS_SENSOR_AHRS,
+        SYS_STATUS_SENSOR_GPS,
         VisionPositionEmitter,
         deduplicate_mission,
+        gps_fix_label,
         offset_spawn_behind_waypoint,
         read_autopilot_yaw,
         reboot_autopilot,
@@ -987,6 +998,20 @@ def nav_sim(
                 loop_start = _time.monotonic()
                 tick_count = 0
 
+                # Rolling counters for the periodic stats line. We track
+                # GPS_INPUT emits (what the sim *sent*) vs LOCAL_POSITION_NED
+                # arrivals (what the autopilot *chose to emit back*). The
+                # ratio is the diagnostic: a healthy autopilot with a fresh
+                # EKF origin getter should produce LOCAL_POSITION_NED at the
+                # 1 Hz we subscribed to. Missing lpos → AHRS origin-relative
+                # getter is stale → AR_PosControl early-returns → no motion.
+                # See docs/SIM_AUTOPILOT_ISSUE_V2.md for the full chain.
+                last_stats_monotonic = _time.monotonic()
+                last_stats_emit_count = 0
+                lpos_rx_since_stats = 0
+                gps_raw_rx_since_stats = 0
+                STATS_INTERVAL_S = 5.0
+
                 # EKF_STATUS_REPORT.flags bits we care about.
                 EKF_POS_HORIZ_ABS = 16
                 EKF_CONST_POS_MODE = 128
@@ -1104,6 +1129,62 @@ def nav_sim(
                                             f"lon={ap_lon:.8f} "
                                             f"hdg={msg.hdg / 100.0:.1f}°[/dim]"
                                         )
+                                elif t == "GPS_RAW_INT" and from_autopilot:
+                                    gps_raw_rx_since_stats += 1
+                                    # Reveals AP_GPS_MAV's reported fix_type.
+                                    # AR_AttitudeControl::get_forward_speed
+                                    # falls back to AP::gps().status() >= FIX_3D
+                                    # when ahrs.get_velocity_NED() fails. If
+                                    # fix_type is NO_FIX/2D here, the fallback
+                                    # is unavailable and AR_WPNav::update() will
+                                    # early-return — rover stays frozen.
+                                    now_m = _time.monotonic()
+                                    if now_m - last_nav_log_monotonic > 2.0:
+                                        console.print(
+                                            f"[dim]gps_raw: fix="
+                                            f"{gps_fix_label(msg.fix_type)} "
+                                            f"sats={msg.satellites_visible} "
+                                            f"hdop={msg.eph / 100.0:.2f}[/dim]"
+                                        )
+                                elif t == "LOCAL_POSITION_NED" and from_autopilot:
+                                    lpos_rx_since_stats += 1
+                                    # EKF velocity (vx, vy) and NED position.
+                                    # If this message is flowing with non-zero
+                                    # magnitudes or changing values, the EKF is
+                                    # publishing a velocity state and
+                                    # ahrs.get_velocity_NED() is returning true.
+                                    # Persistent zeros or missing message is a
+                                    # strong signal AR_WPNav guard #4 is failing.
+                                    now_m = _time.monotonic()
+                                    if now_m - last_nav_log_monotonic > 2.0:
+                                        console.print(
+                                            f"[dim]lpos: "
+                                            f"x={msg.x:+.2f}m y={msg.y:+.2f}m "
+                                            f"vx={msg.vx:+.3f} vy={msg.vy:+.3f} "
+                                            f"vz={msg.vz:+.3f}m/s[/dim]"
+                                        )
+                                elif t == "SYS_STATUS" and from_autopilot:
+                                    # sensors_health bits reveal whether the
+                                    # autopilot considers GPS and AHRS healthy
+                                    # from its own perspective (these can be
+                                    # unhealthy even when EKF_STATUS_REPORT.flags
+                                    # looks fine, e.g. stale sensor data).
+                                    now_m = _time.monotonic()
+                                    if now_m - last_nav_log_monotonic > 2.0:
+                                        h = msg.onboard_control_sensors_health
+                                        e = msg.onboard_control_sensors_enabled
+                                        gps_h = bool(h & SYS_STATUS_SENSOR_GPS)
+                                        ahrs_h = bool(h & SYS_STATUS_SENSOR_AHRS)
+                                        gps_e = bool(e & SYS_STATUS_SENSOR_GPS)
+                                        ahrs_e = bool(e & SYS_STATUS_SENSOR_AHRS)
+                                        console.print(
+                                            f"[dim]sys: "
+                                            f"gps={'OK' if gps_h else 'BAD'}"
+                                            f"{'' if gps_e else '(disabled)'} "
+                                            f"ahrs={'OK' if ahrs_h else 'BAD'}"
+                                            f"{'' if ahrs_e else '(disabled)'}"
+                                            f"[/dim]"
+                                        )
                                 elif t == "STATUSTEXT":
                                     # Always show warnings+ from anything
                                     # on the bus. ArduPilot uses these to
@@ -1207,6 +1288,37 @@ def nav_sim(
                             emitter.emit()
                             vision.emit()
                             tick_count += 1
+
+                            # Every STATS_INTERVAL_S seconds, print achieved
+                            # GPS_INPUT send rate and received LOCAL_POSITION_NED
+                            # count. The expected lpos_rx at 1 Hz subscription
+                            # is ~STATS_INTERVAL_S; anything substantially
+                            # below that means the autopilot's AHRS origin-
+                            # relative position getter is returning false most
+                            # ticks (gating AR_PosControl::update).
+                            now_m = _time.monotonic()
+                            dt_stats = now_m - last_stats_monotonic
+                            if dt_stats >= STATS_INTERVAL_S:
+                                sent = emitter.emit_count - last_stats_emit_count
+                                actual_rate = sent / dt_stats if dt_stats > 0 else 0.0
+                                expected_lpos = int(round(dt_stats))  # 1 Hz sub
+                                lpos_pct = (
+                                    100.0 * lpos_rx_since_stats / expected_lpos
+                                    if expected_lpos > 0 else 0.0
+                                )
+                                console.print(
+                                    f"[dim]stats: gps_out={actual_rate:.1f}Hz "
+                                    f"(target={rate}Hz, sent={sent}/"
+                                    f"{dt_stats:.1f}s)  "
+                                    f"gps_raw_in={gps_raw_rx_since_stats}  "
+                                    f"lpos_in={lpos_rx_since_stats}/"
+                                    f"{expected_lpos} "
+                                    f"({lpos_pct:.0f}% of 1Hz sub)[/dim]"
+                                )
+                                last_stats_monotonic = now_m
+                                last_stats_emit_count = emitter.emit_count
+                                lpos_rx_since_stats = 0
+                                gps_raw_rx_since_stats = 0
 
                             if watcher.armed_latch and not armed_banner_printed:
                                 console.print(
