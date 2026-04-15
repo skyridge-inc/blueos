@@ -725,6 +725,7 @@ def nav_sim(
         FrameMismatchError,
         GpsSimError,
         MissionDownloadError,
+        MissionUploadError,
         MowerProvisionerError,
     )
     from .gps_sim import (
@@ -739,6 +740,7 @@ def nav_sim(
         StopWatcher,
         detect_drive_type,
         STATUSTEXT_SEVERITY_WARNING,
+        VisionPositionEmitter,
         deduplicate_mission,
         offset_spawn_behind_waypoint,
         read_autopilot_yaw,
@@ -909,12 +911,28 @@ def nav_sim(
             # potentially wiping our 6-WP mission with its own. By
             # re-uploading we ensure the autopilot has the correct
             # mission when AUTO starts.
+            # Re-upload the mission after the reboot. Timeout is
+            # generous (15s) because the BlueOS proxy / NetBird tunnel
+            # has higher latency than direct USB. If the final
+            # MISSION_ACK is dropped despite all items being sent, we
+            # warn and continue — the autopilot almost certainly has
+            # the mission (this is the same mission we just downloaded
+            # from it, so worst case it still has its original copy).
             with console.status("Restoring mission after reboot..."):
-                upload_mission(conn, mission)
-            console.print(
-                f"[green]Mission restored:[/green] {len(mission) - 1} "
-                "waypoints + home"
-            )
+                try:
+                    upload_mission(conn, mission, timeout=15.0)
+                    console.print(
+                        f"[green]Mission restored:[/green] "
+                        f"{len(mission) - 1} waypoints + home"
+                    )
+                except MissionUploadError as e:
+                    err_console.print(
+                        f"[yellow]Warning: mission re-upload: {e}[/yellow]\n"
+                        f"[yellow]The autopilot likely still has the "
+                        f"correct mission. Continuing — check "
+                        f"'Mission current seq' and 'nav: wp_dist' in "
+                        f"the telemetry to verify.[/yellow]"
+                    )
 
             try:
                 # Read the autopilot's current EKF yaw so the sim starts
@@ -952,6 +970,7 @@ def nav_sim(
                     first = wait_for_servo_output(conn, timeout=5.0)
 
                 emitter = GpsInputEmitter(conn, model, rate_hz=float(rate))
+                vision = VisionPositionEmitter(conn, model)
                 watcher_cm = StopWatcher(
                     last_mission_seq=last_seq, duration_seconds=duration
                 )
@@ -961,15 +980,28 @@ def nav_sim(
                 last_servo3 = float(first.servo3_raw)
                 armed_banner_printed = False
                 mission_started = False
+                ekf_healthy_banner_printed = False
                 last_custom_mode: int | None = None
                 last_mission_seq: int | None = None
                 last_nav_log_monotonic = 0.0
                 loop_start = _time.monotonic()
                 tick_count = 0
 
+                # EKF_STATUS_REPORT.flags bits we care about.
+                EKF_POS_HORIZ_ABS = 16
+                EKF_CONST_POS_MODE = 128
+
                 with watcher_cm as watcher:
                     console.print(
                         "[green]Sim running. Arm in AUTO via GCS to begin.[/green]"
+                    )
+                    console.print(
+                        "[dim]After arming, wait for the [bold]EKF healthy[/bold] "
+                        "banner. Allow up to 30 seconds for the EKF to fully "
+                        "align (yaw align → origin set → variance settle → "
+                        "using GPS → failsafe cleared). Throttle will not "
+                        "command until the EKF reports POS_HORIZ_ABS set "
+                        "and CONST_POS_MODE clear.[/dim]"
                     )
                     console.print(
                         "[dim]Type [bold]q[/bold] or [bold]:q[/bold] + Enter "
@@ -1089,10 +1121,76 @@ def nav_sim(
                                             f"{text}[/red]"
                                         )
                                 elif t == "EKF_STATUS_REPORT" and from_autopilot:
+                                    # Headline event: detect the moment
+                                    # the EKF exits CONST_POS_MODE and has
+                                    # absolute horizontal position. AUTO
+                                    # mode cannot command throttle until
+                                    # this happens.
+                                    healthy = (
+                                        msg.flags & EKF_POS_HORIZ_ABS
+                                        and not (msg.flags & EKF_CONST_POS_MODE)
+                                    )
+                                    if healthy and not ekf_healthy_banner_printed:
+                                        sim_t = _time.monotonic() - loop_start
+                                        console.print(
+                                            f"[bold green]EKF healthy "
+                                            f"(t={sim_t:.1f}s, flags={msg.flags}). "
+                                            f"AUTO mode can now drive — wait "
+                                            f"~5 s for throttle to ramp.[/bold green]"
+                                        )
+                                        ekf_healthy_banner_printed = True
+
+                                        # Re-arm the nav state machine.
+                                        # A single MISSION_START re-send
+                                        # is not enough to unstick the
+                                        # L1 controller after a bad-EKF
+                                        # period — observed empirically.
+                                        # The reliable trick is to cycle
+                                        # the mode (AUTO → HOLD → AUTO),
+                                        # which tears down and re-builds
+                                        # the mission state machine from
+                                        # scratch with the now-healthy
+                                        # EKF.
+                                        ROVER_MODE_HOLD = 4
+                                        if mission_started:
+                                            console.print(
+                                                "[cyan]Cycling mode "
+                                                "AUTO→HOLD→AUTO to force "
+                                                "nav re-init with healthy "
+                                                "EKF...[/cyan]"
+                                            )
+                                            set_rover_mode(conn, ROVER_MODE_HOLD)
+                                            _time.sleep(0.5)
+                                            set_rover_mode(conn, ROVER_MODE_AUTO)
+                                            _time.sleep(0.2)
+                                            set_current_mission_seq(
+                                                conn, start_seq
+                                            )
+                                            start_mission(conn)
+                                            set_target_groundspeed(
+                                                conn, max_speed_mps
+                                            )
+                                            console.print(
+                                                "[cyan]Re-engaged. "
+                                                "Watch for nav_bearing "
+                                                "to start tracking "
+                                                "target_bearing.[/cyan]"
+                                            )
+                                    elif (
+                                        not healthy
+                                        and ekf_healthy_banner_printed
+                                    ):
+                                        # EKF degraded after being healthy
+                                        # — could be a variance spike.
+                                        console.print(
+                                            f"[yellow]EKF degraded "
+                                            f"(flags={msg.flags}). May "
+                                            f"recover.[/yellow]"
+                                        )
+                                        ekf_healthy_banner_printed = False
+
                                     now_m = _time.monotonic()
                                     if now_m - last_nav_log_monotonic > 2.0:
-                                        # Report innovations that could
-                                        # indicate silent EKF rejection.
                                         console.print(
                                             f"[dim]ekf: vel_var={msg.velocity_variance:.2f} "
                                             f"pos_horiz_var={msg.pos_horiz_variance:.2f} "
@@ -1107,6 +1205,7 @@ def nav_sim(
                             spd = (vn**2 + ve**2) ** 0.5
                             emitter.set_velocity(vn, ve)
                             emitter.emit()
+                            vision.emit()
                             tick_count += 1
 
                             if watcher.armed_latch and not armed_banner_printed:
@@ -1124,18 +1223,19 @@ def nav_sim(
                             # We target start_seq itself: the sim is
                             # spawned ~5 m behind it so wp_dist > 0.
                             if watcher.armed_latch and not mission_started:
+                                # Force AUTO immediately on arm so the
+                                # autopilot starts in the right mode, but
+                                # DEFER MISSION_START until the EKF is
+                                # healthy. Sending MISSION_START while
+                                # the EKF is unhealthy makes the L1 nav
+                                # controller's state machine stick in a
+                                # "waiting for prerequisites" state that
+                                # doesn't auto-recover when the EKF later
+                                # becomes healthy.
                                 set_rover_mode(conn, ROVER_MODE_AUTO)
-                                set_current_mission_seq(conn, start_seq)
-                                start_mission(conn)
-                                # Force a target groundspeed so the rover
-                                # drives even if the vehicle's CRUISE_SPEED
-                                # / WP_SPEED are zero or misconfigured.
-                                set_target_groundspeed(conn, max_speed_mps)
                                 console.print(
-                                    f"[cyan]Forced mode=AUTO, MISSION_START "
-                                    f"sent, current seq={start_seq}, "
-                                    f"target groundspeed="
-                                    f"{max_speed_mps:.2f} m/s[/cyan]"
+                                    "[cyan]Forced mode=AUTO. MISSION_START "
+                                    "deferred until EKF is healthy.[/cyan]"
                                 )
                                 mission_started = True
 

@@ -1,3 +1,34 @@
+# skynet — Agent Guidelines
+
+## Codebase Analysis Prep (READ FIRST)
+
+**Before doing any non-trivial analysis of the existing code (audits,
+architecture review, cross-file refactors, "where is X used?" surveys,
+etc.), regenerate the codebase index:**
+
+```bash
+bunx repomix@latest
+```
+
+This writes a single consolidated XML snapshot of the entire repository
+to `./repomix-output.xml`. Read that file as your primary index of the
+codebase — it gives you the complete file tree, file contents, and
+dependency relationships in one self-contained document, which is far
+more efficient than recursive Glob/Grep traversal for broad questions.
+
+**Workflow:**
+
+1. Run `bunx repomix@latest` (takes a few seconds, idempotent).
+2. Read `./repomix-output.xml` for the global picture.
+3. Use targeted Read/Grep/Glob only for files the index points you to.
+
+**When to skip the index** — for narrow, targeted edits where you
+already know the file and line you're modifying, the regenerate-and-read
+overhead isn't worth it.
+
+**Keep the index fresh** — if you've made non-trivial edits and need to
+re-analyze, re-run `bunx repomix@latest` so the snapshot reflects your
+changes. The output file is gitignored / regenerated on demand.
 
 <!-- BACKLOG.MD MCP GUIDELINES START -->
 

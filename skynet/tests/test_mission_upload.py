@@ -196,6 +196,25 @@ class TestUploadMission:
             upload_mission(conn, [])
         conn.mav.mission_count_send.assert_not_called()
 
+    def test_final_ack_timeout_raises(self):
+        """When all items are sent but the final MISSION_ACK never
+        arrives, we raise 'Timeout waiting for MISSION_ACK after
+        sending N items'. This is the exact error seen over the NetBird
+        tunnel when latency drops the final ACK. The CLI must catch
+        this and treat it as a warning for the phase-2 re-upload."""
+        items = [(40.0, -80.0), (40.001, -80.0)]
+        conn = _fake_conn(
+            [
+                _make_request(0),
+                _make_request(1),
+                # All items sent. Autopilot's MISSION_ACK never arrives.
+            ]
+        )
+        with pytest.raises(
+            MissionUploadError, match="Timeout waiting for MISSION_ACK"
+        ):
+            upload_mission(conn, items, timeout=0.01)
+
     def test_hierarchy(self):
         assert issubclass(MissionUploadError, MowerProvisionerError)
 

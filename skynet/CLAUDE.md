@@ -2,6 +2,38 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Codebase Analysis Prep (READ FIRST)
+
+**Before doing any non-trivial analysis of the existing code (audits,
+architecture review, cross-file refactors, "where is X used?" surveys,
+debugging that spans multiple modules, etc.), regenerate the codebase
+index:**
+
+```bash
+bunx repomix@latest
+```
+
+This writes a single consolidated XML snapshot of the entire repository
+to `./repomix-output.xml`. Read that file as your primary index of the
+codebase — it gives you the complete file tree, file contents, and
+dependency relationships in one self-contained document, which is far
+more efficient than recursive Glob/Grep traversal for broad questions.
+
+**Workflow:**
+
+1. Run `bunx repomix@latest` (takes a few seconds, idempotent).
+2. Read `./repomix-output.xml` for the global picture.
+3. Use targeted Read/Grep/Glob only for the specific files the index
+   points you to.
+
+**When to skip the index** — narrow, targeted edits where you already
+know the file and line you're modifying. The regenerate-and-read
+overhead isn't worth it for one-line bug fixes.
+
+**Keep the index fresh** — if you've made non-trivial edits and need to
+re-analyze, re-run `bunx repomix@latest` so the snapshot reflects your
+changes. `./repomix-output.xml` is regenerated on demand.
+
 ## Build & Test
 
 ```bash

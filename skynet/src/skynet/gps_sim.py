@@ -26,18 +26,61 @@ _SIM_VALUES_CANONICAL: dict[str, float] = {
     # GPS source — MAVLink-injected, no secondary.
     "GPS_TYPE": 14,
     "GPS_TYPE2": 0,
-    # EKF sources — GPS for position/velocity/yaw, baro for altitude.
+    # EKF sources — GPS for position/velocity, baro for altitude,
+    # and GSF (Gaussian Sum Filter) for yaw.
+    #
+    # Yaw chain for a bench-sim on this hardware:
+    # - GPS yaw (EK3_SRC1_YAW=2) does NOT work — AP_GPS_MAV does not
+    #   send the "GPS config data" capability, EKF waits forever.
+    # - Compass yaw (EK3_SRC1_YAW=1) does NOT work — the operator's
+    #   rover has all three compasses disabled (relies on UM982 CAN
+    #   yaw normally), and forcing COMPASS_USE=1 on an uncalibrated
+    #   internal compass gets rejected by the EKF health check
+    #   (compass_var stays at 0 = never fused).
+    # - GSF (EK3_SRC1_YAW=8) IS the canonical no-compass yaw source in
+    #   ArduPilot. It runs 5 parallel EKFs with different initial yaws
+    #   and picks the one that best explains IMU + GPS velocity data.
+    #
+    # EK3_SRC_OPTIONS bit 1 (value 2) enables FuseGSFYaw so the main
+    # EKF uses the GSF estimate.
     "AHRS_EKF_TYPE": 3,
-    "EK3_SRC1_POSXY": 3,
-    "EK3_SRC1_VELXY": 3,
-    "EK3_SRC1_POSZ": 1,
-    "EK3_SRC1_YAW": 2,
-    # Disable all compasses so the EKF uses ONLY our GPS_INPUT yaw.
-    # Without this, the internal compass votes and disagrees with the
-    # static-heading sim, tripping EKF failsafe on a ~1s cycle.
-    "COMPASS_USE": 0,
-    "COMPASS_USE2": 0,
-    "COMPASS_USE3": 0,
+    "EK3_SRC1_POSXY": 3,  # GPS horizontal position
+    "EK3_SRC1_VELXY": 3,  # GPS horizontal velocity
+    "EK3_SRC1_POSZ": 1,   # baro for vertical
+    "EK3_SRC1_YAW": 6,    # ExternalNav (yaw via VISION_POSITION_ESTIMATE)
+    # GSF (EK3_SRC1_YAW=8) was tried but deadlocks: GSF needs motion to
+    # converge on yaw, motion needs nav controller, nav controller needs
+    # yaw-aligned EKF. With no compass and no GPS-yaw fusion path, the
+    # only escape is to inject yaw via a dedicated channel. The
+    # AP_VisualOdom_MAV backend (VISO_TYPE=1) consumes
+    # VISION_POSITION_ESTIMATE messages and feeds them straight to the
+    # EKF as ExternalNav.
+    "VISO_TYPE": 1,
+    # VISO_TYPE=1 alone is necessary but not sufficient. Without
+    # explicit delay/noise params, the EKF's "is this vision data
+    # trustworthy?" pre-check fails silently and yaw alignment never
+    # completes (no "EKF3 IMU yaw aligned" message in the autopilot
+    # log). These three values tell the EKF the vision source has
+    # 50 ms of pipeline delay, ~10 cm position noise, and ~3° yaw
+    # noise — all reasonable defaults for a simulated source.
+    "VISO_DELAY_MS": 50,
+    "VISO_POS_M_NSE": 0.1,
+    "VISO_YAW_M_NSE": 0.05,
+    # Disable all GPS alignment pre-checks. The EKF default requires the
+    # GPS driver to populate sat count, HDop, position error, speed
+    # error, and yaw error fields — but the AP_GPS_MAV driver doesn't
+    # fully populate all of these, so "EKF3 waiting for GPS config
+    # data" is logged forever and the EKF never aligns, leaving flags
+    # stuck at 167 (CONST_POS_MODE). We know our sim GPS is good, so
+    # we skip the pre-checks entirely.
+    "EK3_GPS_CHECK": 0,
+    # Explicit GPS measurement delay. Default is 0 meaning "auto", but
+    # AP_GPS_MAV's auto-detect can fail over a laggy tunnel; 50 ms is
+    # a safe pessimistic value for a NetBird-proxied link.
+    "GPS_DELAY_MS": 50,
+    # COMPASS_USE/USE2/USE3 intentionally not overridden. The operator's
+    # rover has compasses disabled; we don't fight that configuration
+    # because GSF gives us yaw without needing any compass.
     # Bench-safe failsafe relaxations — we have no RC, no GCS heartbeat
     # guarantee, and the sim may legitimately show zero motion while
     # under throttle (before the autopilot acts on servo commands).
@@ -63,6 +106,9 @@ _SIM_VALUES_CANONICAL: dict[str, float] = {
 _PARAM_ALIASES: list[tuple[str, str]] = [
     ("GPS_TYPE", "GPS1_TYPE"),
     ("GPS_TYPE2", "GPS2_TYPE"),
+    # ArduPilot 4.4+ also renamed the per-GPS delay params.
+    ("GPS_DELAY_MS", "GPS1_DELAY_MS"),
+    ("GPS_DELAY_MS2", "GPS2_DELAY_MS"),
 ]
 
 
@@ -424,9 +470,16 @@ class GpsInputEmitter:
         time_usec = (time.monotonic_ns() - self._start_ns) // 1000
         lat = int(round(self.model.lat * 1e7))
         lon = int(round(self.model.lon * 1e7))
+        # Send the sim's kinematic heading as GPS yaw. MAVLink spec:
+        # yaw=0 means "no yaw available", so when heading is exactly 0°
+        # we floor to 1 centidegree (0.01°) — this signals "valid yaw"
+        # while being indistinguishable from true north to the EKF.
+        # If the firmware's AP_GPS_MAV driver fuses this, the sim's
+        # heading drives the vehicle. Otherwise the EKF falls back to
+        # the internal compass, and navigation still works.
         yaw_cdeg = int(round(self.model.heading_deg * 100)) % 36000
         if yaw_cdeg == 0:
-            yaw_cdeg = 1  # ArduPilot treats 0 as "no yaw"
+            yaw_cdeg = 1
 
         # Provide a plausible GPS time. ArduPilot's GPS health check
         # rejects fixes with time_week == 0. Use real wall-clock time
@@ -463,6 +516,68 @@ class GpsInputEmitter:
             0.05,  # vert_accuracy
             20,   # satellites_visible
             yaw_cdeg,
+        )
+
+
+# -------------------- VisionPositionEmitter --------------------
+
+
+class VisionPositionEmitter:
+    """Emits VISION_POSITION_ESTIMATE messages so EKF gets external yaw.
+
+    With EK3_SRC1_YAW=6 (ExternalNav) and VISO_TYPE=1 (MAV vision
+    backend), ArduPilot consumes VISION_POSITION_ESTIMATE.yaw as the
+    EKF's yaw reference. This breaks the GSF chicken-and-egg: GSF needs
+    motion to converge, motion needs nav controller, nav controller
+    needs yaw — but vision yaw is just *given* to the EKF directly, no
+    motion required.
+
+    The position fields (x, y, z) are filled with the sim's NED offset
+    from its origin to keep them self-consistent with GPS_INPUT, but
+    the EKF uses GPS for position fusion (EK3_SRC1_POSXY=3) so the
+    vision position values are only used as a sanity reference.
+    """
+
+    def __init__(self, conn: Any, model: SkidSteerModel) -> None:
+        self.conn = conn
+        self.model = model
+        self._origin_lat = model.start_lat
+        self._origin_lon = model.start_lon
+        self._start_ns = time.monotonic_ns()
+
+    def emit(self) -> None:
+        # time_usec=0 tells AP_VisualOdom_MAV to stamp the message
+        # with the autopilot's local clock instead of trying to
+        # interpret our timestamp. This avoids time-of-arrival sanity
+        # check failures that prevent yaw alignment.
+        time_usec = 0
+
+        # Compute NED offset from origin in meters.
+        cos_lat = math.cos(math.radians(self._origin_lat))
+        m_per_deg_lat = 111_320.0
+        m_per_deg_lon = 111_320.0 * cos_lat
+        north_m = (self.model.lat - self._origin_lat) * m_per_deg_lat
+        east_m = (self.model.lon - self._origin_lon) * m_per_deg_lon
+
+        # MAVLink VISION_POSITION_ESTIMATE uses a local NED frame:
+        # x = north, y = east, z = down (negative for above origin).
+        x = float(north_m)
+        y = float(east_m)
+        z = 0.0
+
+        # Roll, pitch, yaw in radians.
+        roll = 0.0
+        pitch = 0.0
+        yaw = math.radians(self.model.heading_deg)
+
+        self.conn.mav.vision_position_estimate_send(
+            time_usec,
+            x,
+            y,
+            z,
+            roll,
+            pitch,
+            yaw,
         )
 
 
@@ -690,10 +805,46 @@ def start_mission(conn: Any) -> None:
 def set_rover_mode(conn: Any, custom_mode: int) -> None:
     """Set the autopilot's flight mode via MAV_CMD_DO_SET_MODE.
 
-    For ArduRover, pass custom_mode = 10 for AUTO, 4 for HOLD, etc.
+    For ArduRover, pass custom_mode = 10 for AUTO, 4 for HOLD,
+    15 for GUIDED, etc.
     """
     base_mode = mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED
     conn.mav.set_mode_send(conn.target_system, base_mode, custom_mode)
+
+
+def set_position_target_global(conn: Any, lat: float, lon: float) -> None:
+    """Command the rover to navigate to (lat, lon) in GUIDED mode.
+
+    Uses MAVLink SET_POSITION_TARGET_GLOBAL_INT with a type_mask that
+    leaves only the position fields active. The autopilot's GUIDED mode
+    handles speed/heading control to reach the commanded point.
+
+    Bypasses the mission state machine and the L1 nav controller's
+    initialization sequence — useful when AUTO mode refuses to engage.
+    """
+    # type_mask bits set = IGNORE that field.
+    # Bits 0, 1, 2 = lat, lon, alt (we want these — leave UNSET).
+    # Bits 3-5 = vx, vy, vz (ignore).
+    # Bits 6-8 = afx, afy, afz (ignore).
+    # Bit 9 = force (ignore).
+    # Bit 10 = yaw (ignore — autopilot picks).
+    # Bit 11 = yaw_rate (ignore).
+    type_mask = 0b0000_1111_1111_1000
+
+    conn.mav.set_position_target_global_int_send(
+        0,  # time_boot_ms (0 = autopilot uses current)
+        conn.target_system,
+        conn.target_component,
+        mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
+        type_mask,
+        int(round(lat * 1e7)),
+        int(round(lon * 1e7)),
+        0.0,    # alt
+        0.0, 0.0, 0.0,  # vx, vy, vz (ignored)
+        0.0, 0.0, 0.0,  # afx, afy, afz (ignored)
+        0.0,    # yaw (ignored)
+        0.0,    # yaw_rate (ignored)
+    )
 
 
 def set_target_groundspeed(conn: Any, speed_mps: float) -> None:
