@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any, Callable
 
 from pymavlink import mavutil
 
 from .exceptions import MissionUploadError
+
+logger = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[int, int], None]
 
@@ -120,6 +123,129 @@ def upload_mission(
                 f"MAV_MISSION_RESULT={result}"
             )
         return
+
+
+def query_mission_count(conn: Any, timeout: float = 3.0) -> int:
+    """Ask the autopilot how many mission items it currently stores.
+
+    Sends MISSION_REQUEST_LIST and waits for MISSION_COUNT. One retry on
+    timeout. Returns the count (0 if empty / home-only).
+
+    Raises MissionUploadError on repeated timeouts — the caller will
+    typically want to refuse entering AUTO rather than silently accept
+    an unknown mission state, so the failure is explicit.
+    """
+    mission_type = mavutil.mavlink.MAV_MISSION_TYPE_MISSION
+    for _ in range(2):
+        conn.mav.mission_request_list_send(
+            conn.target_system,
+            conn.target_component,
+            mission_type,
+        )
+        msg = conn.recv_match(
+            type="MISSION_COUNT", blocking=True, timeout=timeout
+        )
+        if msg is not None:
+            return int(msg.count)
+    raise MissionUploadError(
+        f"Timeout waiting for MISSION_COUNT after 2 attempts "
+        f"({timeout}s each)"
+    )
+
+
+def upload_and_verify(
+    conn: Any,
+    items: list[tuple[float, float]],
+    *,
+    max_attempts: int = 3,
+    timeout: float = 15.0,
+    progress_callback: ProgressCallback | None = None,
+) -> int:
+    """Upload a mission and verify the autopilot's stored count matches.
+
+    Retries both on MissionUploadError (rejected / timeout) and on a
+    successful upload where MISSION_COUNT readback does not match the
+    expected length. Between attempts, drains any pending mission
+    protocol traffic so a stale MISSION_REQUEST doesn't poison the next
+    round.
+
+    Returns the verified MISSION_COUNT on success (== len(items)).
+    Raises MissionUploadError if all attempts fail.
+
+    This is the path used by the sim after the GPS_TYPE reboot — the
+    single-shot upload_mission call races the post-reboot MAVLink
+    re-handshake on BlueOS+NetBird tunnels and was observed to be
+    rejected mid-protocol with MAV_MISSION_RESULT=13 (INVALID_SEQUENCE),
+    leaving a 1-WP stub that made AUTO mode refuse to drive. See
+    docs/SIM_AUTOPILOT_ISSUE_V4.md §Issue 1.
+    """
+    if not items:
+        raise MissionUploadError("upload_and_verify called with empty items")
+
+    last_error: str | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            upload_mission(
+                conn,
+                items,
+                progress_callback=progress_callback,
+                timeout=timeout,
+            )
+        except MissionUploadError as e:
+            last_error = f"attempt {attempt}/{max_attempts}: {e}"
+            logger.warning("Mission upload failed: %s", last_error)
+            _drain_mission_traffic(conn)
+            time.sleep(1.0 + attempt)
+            continue
+
+        try:
+            stored = query_mission_count(conn, timeout=3.0)
+        except MissionUploadError as e:
+            last_error = (
+                f"attempt {attempt}/{max_attempts}: uploaded but "
+                f"MISSION_COUNT readback failed: {e}"
+            )
+            logger.warning("Mission count readback failed: %s", last_error)
+            time.sleep(1.0 + attempt)
+            continue
+
+        if stored == len(items):
+            return stored
+
+        last_error = (
+            f"attempt {attempt}/{max_attempts}: autopilot stored "
+            f"{stored} items, expected {len(items)}"
+        )
+        logger.warning("Mission count mismatch: %s", last_error)
+        _drain_mission_traffic(conn)
+        time.sleep(1.0 + attempt)
+
+    raise MissionUploadError(
+        f"Mission upload could not be verified after {max_attempts} "
+        f"attempts. Last error: {last_error}"
+    )
+
+
+def _drain_mission_traffic(conn: Any, window: float = 0.5) -> None:
+    """Consume pending MISSION_* messages so a stale request doesn't
+    poison the next upload attempt."""
+    deadline = time.monotonic() + window
+    while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        msg = conn.recv_match(
+            type=[
+                "MISSION_REQUEST_INT",
+                "MISSION_REQUEST",
+                "MISSION_ACK",
+                "MISSION_COUNT",
+                "MISSION_ITEM_INT",
+                "MISSION_ITEM",
+            ],
+            blocking=True,
+            timeout=max(0.05, remaining),
+        )
+        if msg is None:
+            return
 
 
 def _send_item(

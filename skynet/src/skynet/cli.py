@@ -713,6 +713,21 @@ def nav_sim(
     yes: Annotated[
         bool, typer.Option("--yes", "-y", help="Skip confirmation.")
     ] = False,
+    drive_mode: Annotated[
+        str,
+        typer.Option(
+            "--drive-mode",
+            help=(
+                "How to command navigation once the EKF is healthy: "
+                "'auto' (default) runs the mission through ModeAuto "
+                "+ AR_WPNav; 'guided' bypasses the mission state "
+                "machine and sends SET_POSITION_TARGET_GLOBAL_INT "
+                "directly to the target waypoint in GUIDED mode. "
+                "Use 'guided' to isolate whether the no-motion "
+                "symptom is AUTO-specific."
+            ),
+        ),
+    ] = "auto",
 ) -> None:
     """Run a HW-in-the-loop GPS/heading simulator against a real autopilot.
 
@@ -740,6 +755,7 @@ def nav_sim(
         DRIVE_ACKERMANN,
         DRIVE_SKID_STEER,
         MPH_TO_MPS,
+        SIM_PARAMS,
         AckermannModel,
         GpsInputEmitter,
         ServoNormalizer,
@@ -753,7 +769,11 @@ def nav_sim(
         VisionPositionEmitter,
         deduplicate_mission,
         gps_fix_label,
+        log_nav_tuning_params,
+        arm_autopilot,
         offset_spawn_behind_waypoint,
+        offset_spawn_perpendicular,
+        send_rc_override,
         read_autopilot_yaw,
         reboot_autopilot,
         request_diagnostic_streams,
@@ -761,6 +781,7 @@ def nav_sim(
         resolve_sim_params,
         rover_mode_name,
         set_current_mission_seq,
+        set_position_target_global,
         set_rover_mode,
         set_target_groundspeed,
         severity_label,
@@ -771,8 +792,14 @@ def nav_sim(
     )
 
     ROVER_MODE_AUTO = 10
+    ROVER_MODE_HOLD = 4
+    ROVER_MODE_GUIDED = 15
     from .mission_download import download_mission
-    from .mission_upload import upload_mission
+    from .mission_upload import (
+        query_mission_count,
+        upload_and_verify,
+        upload_mission,
+    )
     from .params import fetch_all_params
 
     REBOOT_WAIT = 8  # seconds to wait for autopilot reboot
@@ -816,6 +843,15 @@ def nav_sim(
                         f"  {name} = {all_params[name]}"
                     )
 
+            # Navigation-tuning params. Useful when AUTO visibly refuses
+            # to drive: WP_PIVOT_ANGLE=0 (default) means pivot is
+            # disabled and all turns go through the scurve non-pivot
+            # branch — which never writes nav_bearing, so telemetry
+            # showing nav_bearing=0° is not by itself proof of a stuck
+            # nav controller. See docs/SIM_AUTOPILOT_ISSUE_V3.md.
+            console.print("[bold]Nav tuning params:[/bold]")
+            log_nav_tuning_params(all_params, console.print)
+
             with console.status("Downloading mission from autopilot..."):
                 raw_mission = download_mission(conn)
             console.print(
@@ -843,11 +879,14 @@ def nav_sim(
                 )
                 raise typer.Exit(1)
 
-            # Spawn ~5 m behind the target waypoint so wp_dist > 0 at mission
-            # start. ArduRover's waypoint-reached logic is hysteretic: it
-            # only fires on a transition from distance > WP_RADIUS to below
-            # it. Spawning AT the waypoint means that transition never
-            # happens and the mission is frozen.
+            # Spawn 10 m behind WP1 along the WP1→WP2 back-projection,
+            # with heading 90° CW from the track bearing. The 10 m
+            # distance (vs 3–5 m in V4–V9) gives the L1 controller a
+            # meaningful track segment to follow, and the perpendicular
+            # heading creates a yaw error that forces the nav controller
+            # to compute both a turning correction AND forward throttle.
+            # See docs/SIM_AUTOPILOT_ISSUE_V10.md for the analysis of
+            # why the V9 perpendicular spawn was degenerate.
             last_seq = len(mission) - 1
             target_lat, target_lon = mission[start_seq]
             if start_seq + 1 <= last_seq:
@@ -855,8 +894,15 @@ def nav_sim(
             else:
                 next_lat, next_lon = target_lat, target_lon
             start_lat, start_lon = offset_spawn_behind_waypoint(
-                target_lat, target_lon, next_lat, next_lon, distance_m=5.0
+                target_lat, target_lon, next_lat, next_lon, distance_m=10.0
             )
+            # Compute heading: 90° CW from the bearing toward WP1.
+            import math as _math
+            _cos = _math.cos(_math.radians(start_lat))
+            _dy = (target_lat - start_lat) * 111_320.0
+            _dx = (target_lon - start_lon) * 111_320.0 * _cos
+            _bearing_to_wp1 = _math.degrees(_math.atan2(_dx, _dy)) % 360.0
+            spawn_heading = (_bearing_to_wp1 + 90.0) % 360.0
 
             table = Table(title="Sim config")
             table.add_column("Setting", style="bold")
@@ -874,7 +920,16 @@ def nav_sim(
             table.add_row("Start lat/lon", f"{start_lat:.8f}, {start_lon:.8f}")
             table.add_row("Last mission seq", str(last_seq))
             table.add_row("Duration", f"{duration}s" if duration else "none")
+            table.add_row("Drive mode", drive_mode)
             console.print(table)
+
+            drive_mode_normalised = drive_mode.strip().lower()
+            if drive_mode_normalised not in ("auto", "guided"):
+                err_console.print(
+                    f"[red]--drive-mode must be 'auto' or 'guided', "
+                    f"got {drive_mode!r}[/red]"
+                )
+                raise typer.Exit(2)
 
             if dry_run:
                 resolved = resolve_sim_params(all_params)
@@ -922,39 +977,97 @@ def nav_sim(
             # potentially wiping our 6-WP mission with its own. By
             # re-uploading we ensure the autopilot has the correct
             # mission when AUTO starts.
-            # Re-upload the mission after the reboot. Timeout is
-            # generous (15s) because the BlueOS proxy / NetBird tunnel
-            # has higher latency than direct USB. If the final
-            # MISSION_ACK is dropped despite all items being sent, we
-            # warn and continue — the autopilot almost certainly has
-            # the mission (this is the same mission we just downloaded
-            # from it, so worst case it still has its original copy).
+            #
+            # Use upload_and_verify: on BlueOS+NetBird the first upload
+            # after a reboot can race the MAVLink re-handshake and be
+            # rejected mid-protocol with MAV_MISSION_RESULT=13
+            # (INVALID_SEQUENCE), leaving a 1-WP stub that makes AUTO
+            # refuse to drive. The verify step reads MISSION_COUNT back
+            # and retries on mismatch. Failure here is fatal — the
+            # previous "yellow warn and continue" path silently produced
+            # the V4 bug. See docs/SIM_AUTOPILOT_ISSUE_V4.md §Issue 1.
             with console.status("Restoring mission after reboot..."):
                 try:
-                    upload_mission(conn, mission, timeout=15.0)
+                    stored = upload_and_verify(
+                        conn, mission, max_attempts=3, timeout=15.0
+                    )
                     console.print(
-                        f"[green]Mission restored:[/green] "
-                        f"{len(mission) - 1} waypoints + home"
+                        f"[green]Mission restored & verified:[/green] "
+                        f"{len(mission) - 1} waypoints + home "
+                        f"(autopilot reports {stored} items)"
                     )
                 except MissionUploadError as e:
                     err_console.print(
-                        f"[yellow]Warning: mission re-upload: {e}[/yellow]\n"
-                        f"[yellow]The autopilot likely still has the "
-                        f"correct mission. Continuing — check "
-                        f"'Mission current seq' and 'nav: wp_dist' in "
-                        f"the telemetry to verify.[/yellow]"
+                        f"[red]Mission re-upload failed: {e}[/red]\n"
+                        f"[red]Refusing to run the sim with an "
+                        f"unverified mission — AUTO would not drive "
+                        f"against a stale/partial mission. Aborting so "
+                        f"the operator can investigate.[/red]"
                     )
+                    raise typer.Exit(3) from e
+
+            # Second-pass param write for params that only exist *after*
+            # VISO_TYPE=1 has been persisted across a reboot. The
+            # AP_VisualOdom_MAV backend (VISO_TYPE=1) instantiates
+            # VISO_DELAY_MS / VISO_POS_M_NSE / VISO_YAW_M_NSE only once
+            # its backend is live — on the first pre-reboot param fetch
+            # these names don't exist, so resolve_sim_params drops them
+            # with a WARNING and they never get written. DISARM_DELAY
+            # occasionally also misses the initial gap-detected fetch.
+            # Re-fetch + re-apply now that the firmware has fully
+            # initialised. See docs/SIM_AUTOPILOT_ISSUE_V4.md §Issue 3.
+            try:
+                with console.status(
+                    "Re-checking VISO / DISARM_DELAY params after reboot..."
+                ):
+                    post_boot_params = fetch_all_params(conn)
+                late_names = (
+                    "VISO_DELAY_MS",
+                    "VISO_POS_M_NSE",
+                    "VISO_YAW_M_NSE",
+                    "DISARM_DELAY",
+                )
+                late_writes: dict[str, float] = {}
+                for name in late_names:
+                    if name in post_boot_params and name in SIM_PARAMS:
+                        current = post_boot_params[name]
+                        target = SIM_PARAMS[name]
+                        if abs(current - target) > 1e-6:
+                            late_writes[name] = target
+                if late_writes:
+                    from .params import write_params as _wp
+                    _wp(conn, late_writes, include_calibration=True)
+                    # Record originals in the sidecar so restore on exit
+                    # covers them too. Without this, a second-pass write
+                    # would leak sim overrides past the sim context.
+                    sim_ctx.record_late_originals(
+                        {
+                            name: post_boot_params[name]
+                            for name in late_writes
+                        }
+                    )
+                    console.print(
+                        f"[green]Applied late sim params:[/green] "
+                        f"{', '.join(sorted(late_writes))}"
+                    )
+            except Exception as e:
+                err_console.print(
+                    f"[yellow]Warning: late param re-check failed: "
+                    f"{e}. Continuing — sim may be missing some "
+                    f"nice-to-have overrides but not blockers.[/yellow]"
+                )
 
             try:
-                # Read the autopilot's current EKF yaw so the sim starts
-                # aligned with it. Without this, GPS_INPUT.yaw would
-                # disagree with the IMU-aligned yaw and the EKF would
-                # reject the fix on the first tick.
-                with console.status("Reading autopilot attitude..."):
-                    start_heading = read_autopilot_yaw(conn)
+                # Use the geometry-derived heading (90° CW from bearing
+                # to WP1) rather than reading the autopilot's ATTITUDE.
+                # The ATTITUDE read (V5 fix) returned DCM-fallback 0°
+                # before EKF yaw alignment — using geometry avoids that
+                # race entirely and gives the sim authoritative heading
+                # via GPS_INPUT.yaw + VISION_POSITION_ESTIMATE.yaw.
+                start_heading = spawn_heading
                 console.print(
                     f"[green]Start heading:[/green] {start_heading:.1f}° "
-                    "(from autopilot ATTITUDE)"
+                    "(from spawn geometry — 90° CW from bearing to WP1)"
                 )
 
                 if drive_type == DRIVE_SKID_STEER:
@@ -990,13 +1103,35 @@ def nav_sim(
                 last_servo1 = float(first.servo1_raw)
                 last_servo3 = float(first.servo3_raw)
                 armed_banner_printed = False
-                mission_started = False
+                # "holding" = we have arm-forced the autopilot into HOLD
+                # mode and are waiting for the EKF to reach flags=831
+                # before switching to AUTO/GUIDED. Rationale: when AUTO
+                # is entered before HORIZ_POS_ABS is set,
+                # ModeAuto::_enter/update calls mission.start_or_resume
+                # the instant ahrs.get_origin() returns true — which can
+                # precede HORIZ_POS_ABS by several seconds. The first
+                # do_nav_wp → set_desired_location can then silently
+                # fail in set_origin_and_destination_to_stopping_point,
+                # leaving stale scurve/pos-control state that the
+                # retry/mode-cycle does not always clear. See
+                # docs/SIM_AUTOPILOT_ISSUE_V3.md §"What the new
+                # autopilot-side log adds".
+                holding = False
+                nav_engaged = False  # AUTO or GUIDED is running
+                last_guided_target_ms = 0.0
                 ekf_healthy_banner_printed = False
                 last_custom_mode: int | None = None
                 last_mission_seq: int | None = None
                 last_nav_log_monotonic = 0.0
                 loop_start = _time.monotonic()
                 tick_count = 0
+
+                auto_engaged_at: float | None = None
+                ever_saw_throttle = False
+                auto_arm_sent = False
+                guided_fallback_active = False
+                motor_test_done = False
+                motor_test_started_at: float | None = None
 
                 # Rolling counters for the periodic stats line. We track
                 # GPS_INPUT emits (what the sim *sent*) vs LOCAL_POSITION_NED
@@ -1016,9 +1151,19 @@ def nav_sim(
                 EKF_POS_HORIZ_ABS = 16
                 EKF_CONST_POS_MODE = 128
 
+                # V4–V6 tracked SYS_STATUS AHRS health bit as a
+                # secondary gate alongside EKF_STATUS_REPORT.flags.
+                # V7 proved this was a permanent blocker on rovers
+                # with compasses disabled: the AHRS *enabled* bit is
+                # never set, so the gate can never fire. The AHRS
+                # SYS_STATUS bit reflects compass subsystem status,
+                # not EKF navigability — EKF flags=831 is sufficient.
+                # See docs/SIM_AUTOPILOT_ISSUE_V7.md for the full
+                # history and evidence.
+
                 with watcher_cm as watcher:
                     console.print(
-                        "[green]Sim running. Arm in AUTO via GCS to begin.[/green]"
+                        "[green]Sim running. Will auto-arm once EKF is healthy.[/green]"
                     )
                     console.print(
                         "[dim]After arming, wait for the [bold]EKF healthy[/bold] "
@@ -1087,6 +1232,21 @@ def nav_sim(
                                                 f"[cyan]Flight mode: "
                                                 f"{rover_mode_name(msg.custom_mode)}[/cyan]"
                                             )
+                                elif t == "POSITION_TARGET_GLOBAL_INT" and from_autopilot:
+                                    # Diagnostic for V6 §Issue 4. If
+                                    # this message flows but (lat,lon)
+                                    # stay at our current position,
+                                    # AR_WPNav is running but its
+                                    # scurve state is corrupted.
+                                    now_m = _time.monotonic()
+                                    if now_m - last_nav_log_monotonic > 2.0:
+                                        console.print(
+                                            f"[dim]pos_target: "
+                                            f"lat={msg.lat_int / 1e7:.7f} "
+                                            f"lon={msg.lon_int / 1e7:.7f} "
+                                            f"alt={msg.alt:.2f}m "
+                                            f"mask=0x{msg.type_mask:04X}[/dim]"
+                                        )
                                 elif t == "MISSION_ITEM_REACHED" and from_autopilot:
                                     console.print(
                                         f"[cyan]Reached waypoint {msg.seq}[/cyan]"
@@ -1112,6 +1272,8 @@ def nav_sim(
                                             f"nav_bearing={msg.nav_bearing}°[/dim]"
                                         )
                                 elif t == "VFR_HUD" and from_autopilot:
+                                    if msg.throttle > 0:
+                                        ever_saw_throttle = True
                                     now_m = _time.monotonic()
                                     if now_m - last_nav_log_monotonic > 2.0:
                                         console.print(
@@ -1169,10 +1331,10 @@ def nav_sim(
                                     # from its own perspective (these can be
                                     # unhealthy even when EKF_STATUS_REPORT.flags
                                     # looks fine, e.g. stale sensor data).
+                                    h = msg.onboard_control_sensors_health
+                                    e = msg.onboard_control_sensors_enabled
                                     now_m = _time.monotonic()
                                     if now_m - last_nav_log_monotonic > 2.0:
-                                        h = msg.onboard_control_sensors_health
-                                        e = msg.onboard_control_sensors_enabled
                                         gps_h = bool(h & SYS_STATUS_SENSOR_GPS)
                                         ahrs_h = bool(h & SYS_STATUS_SENSOR_AHRS)
                                         gps_e = bool(e & SYS_STATUS_SENSOR_GPS)
@@ -1207,10 +1369,17 @@ def nav_sim(
                                     # absolute horizontal position. AUTO
                                     # mode cannot command throttle until
                                     # this happens.
-                                    healthy = (
+                                    # V7: EKF flags alone are
+                                    # sufficient — the SYS_STATUS AHRS
+                                    # bit reflects compass subsystem
+                                    # health, which is permanently
+                                    # disabled on this rover. See
+                                    # docs/SIM_AUTOPILOT_ISSUE_V7.md.
+                                    healthy = bool(
                                         msg.flags & EKF_POS_HORIZ_ABS
                                         and not (msg.flags & EKF_CONST_POS_MODE)
                                     )
+                                    # One-shot banner (informational).
                                     if healthy and not ekf_healthy_banner_printed:
                                         sim_t = _time.monotonic() - loop_start
                                         console.print(
@@ -1221,28 +1390,102 @@ def nav_sim(
                                         )
                                         ekf_healthy_banner_printed = True
 
-                                        # Re-arm the nav state machine.
-                                        # A single MISSION_START re-send
-                                        # is not enough to unstick the
-                                        # L1 controller after a bad-EKF
-                                        # period — observed empirically.
-                                        # The reliable trick is to cycle
-                                        # the mode (AUTO → HOLD → AUTO),
-                                        # which tears down and re-builds
-                                        # the mission state machine from
-                                        # scratch with the now-healthy
-                                        # EKF.
-                                        ROVER_MODE_HOLD = 4
-                                        if mission_started:
-                                            console.print(
-                                                "[cyan]Cycling mode "
-                                                "AUTO→HOLD→AUTO to force "
-                                                "nav re-init with healthy "
-                                                "EKF...[/cyan]"
+                                    # Auto-arm once EKF is healthy.
+                                    # Sends MAV_CMD_COMPONENT_ARM_DISARM
+                                    # so the operator doesn't need to
+                                    # arm via QGC. ARMING_CHECK=0 is
+                                    # set by sim params, so this
+                                    # succeeds immediately. The arm
+                                    # triggers the HOLD→wait→AUTO flow
+                                    # below.
+                                    if (
+                                        healthy
+                                        and not auto_arm_sent
+                                        and not watcher.armed_latch
+                                    ):
+                                        arm_autopilot(conn)
+                                        auto_arm_sent = True
+                                        console.print(
+                                            "[cyan]Auto-arm command sent.[/cyan]"
+                                        )
+
+                                    # V8: decouple the HOLD→AUTO
+                                    # transition from the one-shot
+                                    # banner. Run on EVERY healthy
+                                    # tick when holding+not-engaged.
+                                    # The V8 log showed EKF going
+                                    # healthy BEFORE arm was detected
+                                    # (MANUAL mode on this run), so
+                                    # the one-shot gate consumed the
+                                    # banner while holding=False and
+                                    # the transition never fired. See
+                                    # docs/SIM_AUTOPILOT_ISSUE_V8.md.
+                                    if (
+                                        healthy
+                                        and holding
+                                        and not nav_engaged
+                                    ):
+                                        # Pre-AUTO mission-count gate.
+                                        if drive_mode_normalised == "auto":
+                                            try:
+                                                stored = query_mission_count(
+                                                    conn, timeout=3.0
+                                                )
+                                            except MissionUploadError as e:
+                                                err_console.print(
+                                                    f"[red]Pre-AUTO "
+                                                    f"MISSION_COUNT query "
+                                                    f"failed: {e}. Refusing "
+                                                    f"to engage AUTO.[/red]"
+                                                )
+                                                raise
+                                            if stored < last_seq + 1:
+                                                err_console.print(
+                                                    f"[red]Pre-AUTO check: "
+                                                    f"autopilot stores "
+                                                    f"{stored} mission items "
+                                                    f"but sim expects at "
+                                                    f"least {last_seq + 1} "
+                                                    f"(through seq "
+                                                    f"{last_seq}). Refusing "
+                                                    f"to engage AUTO — "
+                                                    f"re-upload the mission "
+                                                    f"and retry.[/red]"
+                                                )
+                                                raise typer.Exit(4)
+
+                                        from .mission_upload import (
+                                            _drain_mission_traffic,
+                                        )
+                                        _drain_mission_traffic(conn, window=0.5)
+                                        set_rover_mode(conn, ROVER_MODE_HOLD)
+                                        _time.sleep(0.3)
+                                        if drive_mode_normalised == "guided":
+                                            set_rover_mode(
+                                                conn, ROVER_MODE_GUIDED
                                             )
-                                            set_rover_mode(conn, ROVER_MODE_HOLD)
-                                            _time.sleep(0.5)
-                                            set_rover_mode(conn, ROVER_MODE_AUTO)
+                                            _time.sleep(0.2)
+                                            set_position_target_global(
+                                                conn, target_lat, target_lon
+                                            )
+                                            last_guided_target_ms = (
+                                                _time.monotonic()
+                                            )
+                                            set_target_groundspeed(
+                                                conn, max_speed_mps
+                                            )
+                                            console.print(
+                                                "[cyan]Engaged "
+                                                "HOLD→GUIDED → "
+                                                f"target=({target_lat:.7f}, "
+                                                f"{target_lon:.7f}). "
+                                                "Bypassing mission "
+                                                "state machine.[/cyan]"
+                                            )
+                                        else:
+                                            set_rover_mode(
+                                                conn, ROVER_MODE_AUTO
+                                            )
                                             _time.sleep(0.2)
                                             set_current_mission_seq(
                                                 conn, start_seq
@@ -1252,11 +1495,84 @@ def nav_sim(
                                                 conn, max_speed_mps
                                             )
                                             console.print(
-                                                "[cyan]Re-engaged. "
+                                                "[cyan]Engaged "
+                                                "HOLD→AUTO → "
+                                                "MISSION_START "
+                                                f"@ seq={start_seq}. "
                                                 "Watch for nav_bearing "
-                                                "to start tracking "
-                                                "target_bearing.[/cyan]"
+                                                "to track target_bearing "
+                                                "and servos to leave "
+                                                "1500 PWM.[/cyan]"
                                             )
+                                        nav_engaged = True
+                                        holding = False
+                                        auto_engaged_at = _time.monotonic()
+                                        ever_saw_throttle = False
+
+                                        # Post-engagement param probe:
+                                        # read speed/accel params to
+                                        # see if the scurve has sane
+                                        # inputs. If any are zero the
+                                        # scurve can't produce motion.
+                                        _PROBE_PARAMS = [
+                                            "CRUISE_SPEED",
+                                            "CRUISE_THROTTLE",
+                                            "WP_SPEED",
+                                            "ATC_ACCEL_MAX",
+                                            "ATC_DECEL_MAX",
+                                            "ATC_SPEED_P",
+                                            "ATC_SPEED_I",
+                                            "ATC_SPEED_FF",
+                                            "MOT_THR_MIN",
+                                            "MOT_THR_MAX",
+                                            "BRD_SAFETY_DEFLT",
+                                            "BRD_SAFETYENABLE",
+                                        ]
+                                        for _pname in _PROBE_PARAMS:
+                                            conn.mav.param_request_read_send(
+                                                conn.target_system,
+                                                conn.target_component,
+                                                _pname.encode("utf-8"),
+                                                -1,
+                                            )
+                                        _probe_deadline = (
+                                            _time.monotonic() + 3.0
+                                        )
+                                        _probed: dict[str, float] = {}
+                                        while (
+                                            _time.monotonic() < _probe_deadline
+                                            and len(_probed) < len(_PROBE_PARAMS)
+                                        ):
+                                            _pm = conn.recv_match(
+                                                type="PARAM_VALUE",
+                                                blocking=True,
+                                                timeout=0.5,
+                                            )
+                                            if _pm is None:
+                                                continue
+                                            _pid = _pm.param_id
+                                            if isinstance(_pid, bytes):
+                                                _pid = _pid.decode(
+                                                    "utf-8"
+                                                ).rstrip("\x00")
+                                            if _pid in _PROBE_PARAMS:
+                                                _probed[_pid] = _pm.param_value
+                                        _probe_lines = []
+                                        for _pname in _PROBE_PARAMS:
+                                            _val = _probed.get(_pname)
+                                            _flag = ""
+                                            if _val is not None and _val == 0:
+                                                _flag = " [ZERO!]"
+                                            _probe_lines.append(
+                                                f"  {_pname}="
+                                                f"{_val if _val is not None else '?'}"
+                                                f"{_flag}"
+                                            )
+                                        console.print(
+                                            "[dim]Post-engage param probe:\n"
+                                            + "\n".join(_probe_lines)
+                                            + "[/dim]"
+                                        )
                                     elif (
                                         not healthy
                                         and ekf_healthy_banner_printed
@@ -1326,41 +1642,193 @@ def nav_sim(
                                 )
                                 armed_banner_printed = True
 
-                            # Once armed, force AUTO mode and kick off
-                            # the mission. The autopilot sometimes reverts
-                            # to MANUAL after a reboot regardless of what
-                            # QGroundControl's UI shows, and arming in
-                            # MANUAL means the rover never navigates.
-                            #
-                            # We target start_seq itself: the sim is
-                            # spawned ~5 m behind it so wp_dist > 0.
-                            if watcher.armed_latch and not mission_started:
-                                # Force AUTO immediately on arm so the
-                                # autopilot starts in the right mode, but
-                                # DEFER MISSION_START until the EKF is
-                                # healthy. Sending MISSION_START while
-                                # the EKF is unhealthy makes the L1 nav
-                                # controller's state machine stick in a
-                                # "waiting for prerequisites" state that
-                                # doesn't auto-recover when the EKF later
-                                # becomes healthy.
-                                set_rover_mode(conn, ROVER_MODE_AUTO)
-                                console.print(
-                                    "[cyan]Forced mode=AUTO. MISSION_START "
-                                    "deferred until EKF is healthy.[/cyan]"
-                                )
-                                mission_started = True
-
-                            # If the autopilot drifts back to MANUAL after
-                            # arming (e.g. RC failsafe kicks it out of AUTO),
-                            # put it back in AUTO so the mission resumes.
+                            # ── MANUAL-mode motor test ──
+                            # After arming, briefly switch to MANUAL
+                            # and inject RC override to test whether
+                            # the autopilot passes throttle to servos.
+                            # This tests the most fundamental path:
+                            #   RC input → MANUAL mixer → SERVO_OUTPUT
+                            # If servos stay at 1500, the motor/RC/IOMCU
+                            # config is broken — not just the nav
+                            # controller. Runs once, then resumes
+                            # the normal HOLD→AUTO flow.
                             if (
-                                mission_started
-                                and last_custom_mode is not None
-                                and last_custom_mode != ROVER_MODE_AUTO
+                                watcher.armed_latch
+                                and armed_banner_printed
+                                and not motor_test_done
+                                and not holding
+                                and not nav_engaged
                             ):
-                                set_rover_mode(conn, ROVER_MODE_AUTO)
-                            elif not watcher.armed_latch and armed_banner_printed:
+                                ROVER_MODE_MANUAL = 0
+                                console.print(
+                                    "[bold cyan]── Motor test: "
+                                    "MANUAL + RC override ──[/bold cyan]"
+                                )
+                                set_rover_mode(conn, ROVER_MODE_MANUAL)
+                                _time.sleep(0.5)
+
+                                # Phase 1: forward (both motors)
+                                # RC3=throttle in standard Rover config
+                                # Send 1600 (mild forward) for 2 s
+                                test_results: list[str] = []
+                                for phase_name, rc_ch, rc_val, dur in [
+                                    ("Forward (RC3=1600)", 3, 1600, 2.0),
+                                    ("Steer left (RC1=1300)", 1, 1300, 2.0),
+                                    ("Steer right (RC1=1700)", 1, 1700, 2.0),
+                                    ("Neutral (RC1=1500,RC3=1500)", 0, 0, 0.5),
+                                ]:
+                                    if rc_ch > 0:
+                                        send_rc_override(
+                                            conn, {rc_ch: rc_val}
+                                        )
+                                    else:
+                                        send_rc_override(
+                                            conn, {1: 1500, 3: 1500}
+                                        )
+                                    phase_end = _time.monotonic() + dur
+                                    s1_min = 9999
+                                    s1_max = 0
+                                    s3_min = 9999
+                                    s3_max = 0
+                                    while _time.monotonic() < phase_end:
+                                        # Keep GPS flowing
+                                        emitter.emit()
+                                        vision.emit()
+                                        srv = conn.recv_match(
+                                            type="SERVO_OUTPUT_RAW",
+                                            blocking=True,
+                                            timeout=0.2,
+                                        )
+                                        if srv is not None:
+                                            s1_min = min(s1_min, srv.servo1_raw)
+                                            s1_max = max(s1_max, srv.servo1_raw)
+                                            s3_min = min(s3_min, srv.servo3_raw)
+                                            s3_max = max(s3_max, srv.servo3_raw)
+                                    moved = (
+                                        s1_max - s1_min > 10
+                                        or s3_max - s3_min > 10
+                                        or (rc_ch == 3 and s3_max > 1510)
+                                        or (rc_ch == 1 and s1_max > 1510)
+                                        or (rc_ch == 1 and s1_min < 1490)
+                                    )
+                                    status = (
+                                        "[green]RESPONDED[/green]"
+                                        if moved
+                                        else "[red]NO RESPONSE[/red]"
+                                    )
+                                    line = (
+                                        f"  {phase_name}: "
+                                        f"S1=[{s1_min}–{s1_max}] "
+                                        f"S3=[{s3_min}–{s3_max}] "
+                                        f"→ {status}"
+                                    )
+                                    test_results.append(line)
+                                    console.print(line)
+
+                                # Release overrides
+                                send_rc_override(conn, {1: 0, 3: 0})
+
+                                any_response = any(
+                                    "RESPONDED" in r for r in test_results
+                                )
+                                if any_response:
+                                    console.print(
+                                        "[bold green]Motor test: at "
+                                        "least one channel responded. "
+                                        "Motor path is alive.[/bold green]"
+                                    )
+                                else:
+                                    console.print(
+                                        "[bold red]Motor test: NO "
+                                        "servo response to any RC "
+                                        "override. Motor/RC/IOMCU "
+                                        "config is broken — this is "
+                                        "upstream of the nav "
+                                        "controller.[/bold red]"
+                                    )
+
+                                motor_test_done = True
+                                console.print(
+                                    "[cyan]Motor test complete. "
+                                    "Resuming normal flow...[/cyan]"
+                                )
+
+                            # On first arm, park the autopilot in HOLD
+                            # instead of AUTO. ModeAuto::_enter would
+                            # otherwise queue mission.start_or_resume at
+                            # the exact moment the EKF first reports an
+                            # origin — which precedes HORIZ_POS_ABS and
+                            # can silently fail the first do_nav_wp.
+                            # HOLD needs no navigation state, so we can
+                            # safely linger there until flags=831.
+                            if watcher.armed_latch and not holding and not nav_engaged:
+                                set_rover_mode(conn, ROVER_MODE_HOLD)
+                                console.print(
+                                    "[cyan]Forced mode=HOLD. "
+                                    "Switching to "
+                                    f"{drive_mode_normalised.upper()} "
+                                    "once EKF reports flags=831.[/cyan]"
+                                )
+                                holding = True
+
+                            # HOLD stickiness: while we're in the "wait
+                            # for EKF health" window, aggressively
+                            # re-assert HOLD if something external (QGC,
+                            # a stale auto-re-engage on the autopilot)
+                            # flips the mode away. This prevents
+                            # ModeAuto::_enter from firing twice against
+                            # an unhealthy EKF — once on the initial
+                            # user-arm in AUTO and again on a QGC
+                            # re-command — which the V5 log showed
+                            # happened at t≈6.2 s. See
+                            # docs/SIM_AUTOPILOT_ISSUE_V5.md §Issue 4.
+                            if (
+                                holding
+                                and not nav_engaged
+                                and last_custom_mode is not None
+                                and last_custom_mode != ROVER_MODE_HOLD
+                            ):
+                                set_rover_mode(conn, ROVER_MODE_HOLD)
+                                console.print(
+                                    f"[yellow]Re-asserted HOLD "
+                                    f"(autopilot flipped to "
+                                    f"{rover_mode_name(last_custom_mode)} "
+                                    f"before EKF healthy).[/yellow]"
+                                )
+
+                            # Keep the autopilot in the chosen nav mode
+                            # once engaged. If something (RC failsafe,
+                            # manual override via QGC) kicks it out,
+                            # drive it back. We only do this AFTER
+                            # nav_engaged is true so we don't fight the
+                            # operator during the HOLD-wait window.
+                            if nav_engaged and last_custom_mode is not None:
+                                target_mode = (
+                                    ROVER_MODE_AUTO
+                                    if drive_mode_normalised == "auto"
+                                    else ROVER_MODE_GUIDED
+                                )
+                                if last_custom_mode != target_mode:
+                                    set_rover_mode(conn, target_mode)
+
+                            # GUIDED requires the target position to be
+                            # re-sent periodically. ArduPilot clears the
+                            # GUIDED target after GUID_TIMEOUT (default
+                            # 3 s) if no SET_POSITION_TARGET_* arrives,
+                            # reverting to a loiter/stop. Re-send at
+                            # 1 Hz to keep the target fresh.
+                            if (
+                                nav_engaged
+                                and drive_mode_normalised == "guided"
+                            ):
+                                now_ms = _time.monotonic()
+                                if now_ms - last_guided_target_ms > 1.0:
+                                    set_position_target_global(
+                                        conn, target_lat, target_lon
+                                    )
+                                    last_guided_target_ms = now_ms
+
+                            if not watcher.armed_latch and armed_banner_printed:
                                 console.print(
                                     "[yellow]Transient disarm — EKF may still be converging. "
                                     "Waiting for re-arm...[/yellow]"

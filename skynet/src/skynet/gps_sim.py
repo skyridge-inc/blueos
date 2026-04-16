@@ -414,6 +414,26 @@ class SimParamContext:
 
         return self
 
+    def record_late_originals(self, originals: dict[str, float]) -> None:
+        """Merge originals discovered after a post-reboot re-fetch into
+        the sidecar and the in-memory restore set.
+
+        Needed because some params (notably `VISO_*` and occasionally
+        `DISARM_DELAY`) only materialise once `VISO_TYPE=1` has been
+        persisted across a reboot — they can't be captured in the
+        first `__enter__` pass. Without this, a second-pass write of
+        those params would leak past sim context exit.
+        """
+        if self._originals is None:
+            self._originals = {}
+        for name, value in originals.items():
+            # Don't overwrite — the earliest observed value is the real
+            # pre-sim state.
+            self._originals.setdefault(name, value)
+        save_param_file(
+            self.sidecar, self._originals, include_calibration=True
+        )
+
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         # Always restore handlers first.
         if self._prev_sigint is not None:
@@ -753,6 +773,11 @@ def request_diagnostic_streams(conn: Any) -> None:
     - SYS_STATUS: onboard_control_sensors_health bits. GPS sensor-health
       bit shows whether the autopilot considers GPS healthy from its
       own perspective (distinct from the fix_type).
+    - POSITION_TARGET_GLOBAL_INT: what the autopilot's nav controller
+      is *aiming* at. Missing = AR_WPNav early-returned before even
+      publishing a target; present = AR_WPNav is live and we can
+      compare target vs current position to understand throttle=0
+      behaviour. Added for V6 Issue 4 diagnostics.
     """
     for msg_id in (
         mavutil.mavlink.MAVLINK_MSG_ID_MISSION_CURRENT,
@@ -763,6 +788,7 @@ def request_diagnostic_streams(conn: Any) -> None:
         mavutil.mavlink.MAVLINK_MSG_ID_GPS_RAW_INT,
         mavutil.mavlink.MAVLINK_MSG_ID_LOCAL_POSITION_NED,
         mavutil.mavlink.MAVLINK_MSG_ID_SYS_STATUS,
+        mavutil.mavlink.MAVLINK_MSG_ID_POSITION_TARGET_GLOBAL_INT,
     ):
         _set_message_interval(conn, msg_id, 1.0)
 
@@ -925,6 +951,58 @@ SPEED_PARAMS_TO_CHECK = (
 )
 
 
+# Navigation-tuning params that directly shape AR_WPNav / AR_PivotTurn
+# behaviour. WP_PIVOT_ANGLE defaults to 0 (pivot disabled); the non-
+# pivot branch in AR_WPNav::update_steering_and_speed never writes
+# _desired_heading_cd, which is why NAV_CONTROLLER_OUTPUT.nav_bearing
+# stays at 0° even when the autopilot *is* producing steering/throttle.
+# We log these at sim start so the operator can tell at a glance whether
+# pivot is going to fire for their geometry. See
+# docs/SIM_AUTOPILOT_ISSUE_V3.md for the full reasoning.
+NAV_TUNING_PARAMS_TO_LOG = (
+    "WP_PIVOT_ANGLE",
+    "WP_PIVOT_RATE",
+    "WP_RADIUS",
+    "WP_OVERSHOOT",
+    "WPNAV_SPEED",
+    "WPNAV_ACCEL",
+    "WPNAV_JERK",
+    "TURN_MAX_G",
+    "ATC_STR_ACC_MAX",
+)
+
+
+def log_nav_tuning_params(
+    params: dict[str, float],
+    printer: Callable[[str], None],
+) -> None:
+    """Print nav-tuning param values (or 'missing') for at-a-glance diagnostics.
+
+    The three anomalies most worth flagging here:
+    - `WP_PIVOT_ANGLE <= 5`  → AR_PivotTurn never activates; non-pivot
+      branch used for all turns.
+    - `WPNAV_SPEED == 0`     → scurve speed limit zero → target velocity
+      collapses to zero → throttle stays at stop-controller output.
+    - `WP_RADIUS == 0`       → waypoint reached-test becomes ambiguous
+      (radius is used by AR_WPNav to detect "near WP"); paired with a
+      degenerate track this can cause reached_destination to latch
+      prematurely.
+    """
+    for name in NAV_TUNING_PARAMS_TO_LOG:
+        if name in params:
+            val = params[name]
+            note = ""
+            if name == "WP_PIVOT_ANGLE" and val <= 5:
+                note = "  [PIVOT DISABLED — only scurve steering]"
+            elif name == "WPNAV_SPEED" and val == 0:
+                note = "  [ZERO — scurve will not command motion]"
+            elif name == "WP_RADIUS" and val == 0:
+                note = "  [ZERO — reached-waypoint logic degenerate]"
+            printer(f"  {name} = {val}{note}")
+        else:
+            printer(f"  {name} = <not on autopilot>")
+
+
 def warn_on_zero_speed_params(
     params: dict[str, float],
     printer: Callable[[str], None],
@@ -1031,6 +1109,87 @@ def offset_spawn_behind_waypoint(
     )
 
 
+def offset_spawn_perpendicular(
+    wp_lat: float,
+    wp_lon: float,
+    distance_m: float = 3.0,
+) -> tuple[tuple[float, float], float]:
+    """Place the rover `distance_m` from `wp` facing 90° CW from the bearing to wp.
+
+    Returns ((lat, lon), heading_deg).
+
+    The rover is offset due south of the waypoint (arbitrary direction
+    since we only have one point), and the heading is set to 90° CW
+    from the bearing toward the waypoint. With the rover south of the
+    WP, the bearing to the WP is ~0° (north), so the heading is ~90°
+    (east). This gives the L1 navigation controller a non-degenerate
+    line segment (rover is not on the track and must steer) and a
+    non-zero cross-track error that forces an immediate steering +
+    throttle response.
+
+    The "behind the waypoint" approach used previously (V4–V9) placed
+    the rover ON the track with heading aligned to it. ArduRover's
+    AR_WPNav non-pivot branch produced nav_bearing=0° and throttle=0%
+    in that geometry. A perpendicular offset forces the nav controller
+    to compute a real cross-track correction which exercises a
+    different (working) code path.
+    """
+    cos_lat = math.cos(math.radians(wp_lat))
+    m_per_deg_lat = 111_320.0
+    m_per_deg_lon = 111_320.0 * cos_lat if cos_lat != 0 else 111_320.0
+
+    # Place rover due south of the waypoint.
+    spawn_lat = wp_lat - distance_m / m_per_deg_lat
+    spawn_lon = wp_lon
+
+    # Bearing from spawn to WP is ~0° (north).
+    # 90° CW from that → heading = 90° (east).
+    dy_m = (wp_lat - spawn_lat) * m_per_deg_lat
+    dx_m = (wp_lon - spawn_lon) * m_per_deg_lon
+    bearing_to_wp = math.degrees(math.atan2(dx_m, dy_m)) % 360.0
+    heading_deg = (bearing_to_wp + 90.0) % 360.0
+
+    return (spawn_lat, spawn_lon), heading_deg
+
+
+def send_rc_override(
+    conn: Any,
+    channels: dict[int, int],
+) -> None:
+    """Send RC_CHANNELS_OVERRIDE with specific channel PWM values.
+
+    `channels` maps 1-based channel number to PWM (1000–2000).
+    Channels not in the dict are sent as 0 (no override).
+    """
+    ch = [0] * 18
+    for num, pwm in channels.items():
+        if 1 <= num <= 18:
+            ch[num - 1] = pwm
+    conn.mav.rc_channels_override_send(
+        conn.target_system,
+        conn.target_component,
+        *ch[:8],   # channels 1–8
+        *ch[8:],   # channels 9–18 (MAVLink v2)
+    )
+
+
+def arm_autopilot(conn: Any) -> None:
+    """Send MAV_CMD_COMPONENT_ARM_DISARM to arm the vehicle."""
+    conn.mav.command_long_send(
+        conn.target_system,
+        conn.target_component,
+        mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+        0,
+        1.0,  # param1 = 1 → arm
+        0.0,  # param2 = 0 → normal arm (21196 = force)
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+    )
+
+
 def reboot_autopilot(conn: Any) -> None:
     """Send MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN to reboot the autopilot."""
     conn.mav.command_long_send(
@@ -1053,17 +1212,48 @@ def read_autopilot_yaw(conn: Any, timeout: float = 3.0) -> float:
 
     Returns 0.0 if no ATTITUDE is received within `timeout`. The caller
     should log a warning in that case.
+
+    Samples several ATTITUDE messages and waits for the yaw to settle
+    before returning. Before the EKF finishes tilt/yaw alignment, the
+    autopilot falls back to DCM and reports `yaw=0` — using that raw
+    value as the sim's seed heading caused the V5 mismatch where the
+    EKF's post-alignment yaw disagreed with the sim's kinematic
+    heading. See docs/SIM_AUTOPILOT_ISSUE_V5.md §Issue 3.
     """
-    msg = conn.recv_match(type="ATTITUDE", blocking=True, timeout=timeout)
-    if msg is None:
+    deadline = time.monotonic() + max(timeout, 0.5)
+    yaws: list[float] = []
+    last_any: float | None = None
+    while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        msg = conn.recv_match(
+            type="ATTITUDE",
+            blocking=True,
+            timeout=min(0.5, max(0.05, remaining)),
+        )
+        if msg is None:
+            continue
+        yaw_deg = math.degrees(msg.yaw) % 360.0
+        last_any = yaw_deg
+        yaws.append(yaw_deg)
+        # Need ≥3 consecutive samples with range <1° to call it settled.
+        if len(yaws) >= 3:
+            recent = yaws[-3:]
+            spread = max(recent) - min(recent)
+            if spread < 1.0:
+                return sum(recent) / 3.0
+
+    if last_any is None:
         logger.warning(
             "No ATTITUDE received within %ss — starting sim at heading 0°",
             timeout,
         )
         return 0.0
-    # msg.yaw is radians, convention -pi..pi with 0 = north, positive = east (CW)
-    yaw_deg = math.degrees(msg.yaw) % 360.0
-    return yaw_deg
+    logger.warning(
+        "ATTITUDE yaw had not settled after %ss (last=%.1f°, samples=%d); "
+        "using last sample as seed heading",
+        timeout, last_any, len(yaws),
+    )
+    return last_any
 
 
 def wait_for_servo_output(conn: Any, timeout: float = 2.0) -> Any:
