@@ -739,6 +739,7 @@ class TestStreamRequests:
             mavutil.mavlink.MAVLINK_MSG_ID_LOCAL_POSITION_NED,
             mavutil.mavlink.MAVLINK_MSG_ID_SYS_STATUS,
             mavutil.mavlink.MAVLINK_MSG_ID_POSITION_TARGET_GLOBAL_INT,
+            mavutil.mavlink.MAVLINK_MSG_ID_ATTITUDE,
         }
 
         conn = self._conn()

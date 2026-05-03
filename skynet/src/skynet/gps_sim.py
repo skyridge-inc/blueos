@@ -800,6 +800,11 @@ def request_diagnostic_streams(conn: Any) -> None:
         mavutil.mavlink.MAVLINK_MSG_ID_LOCAL_POSITION_NED,
         mavutil.mavlink.MAVLINK_MSG_ID_SYS_STATUS,
         mavutil.mavlink.MAVLINK_MSG_ID_POSITION_TARGET_GLOBAL_INT,
+        # ATTITUDE drives the pre-arm orientation check: if the autopilot
+        # reports |roll| or |pitch| beyond ~15° the rover is on its side
+        # and AR_PosControl will silently produce 0 desired_speed (V13
+        # freeze). Streaming at 2 Hz is plenty for a one-shot check.
+        mavutil.mavlink.MAVLINK_MSG_ID_ATTITUDE,
     ):
         _set_message_interval(conn, msg_id, 1.0)
 

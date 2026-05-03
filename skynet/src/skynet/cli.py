@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import time
 from datetime import datetime, timezone
@@ -1206,6 +1207,18 @@ def nav_sim(
                 auto_engaged_at: float | None = None
                 ever_saw_throttle = False
                 auto_arm_sent = False
+                # Latest ATTITUDE.roll/pitch in radians for the pre-arm
+                # orientation check. None until the first ATTITUDE message
+                # arrives.
+                last_attitude_roll_rad: float | None = None
+                last_attitude_pitch_rad: float | None = None
+                # Hard limit before we refuse to arm. Rovers do drive on
+                # slopes — 15° gives margin for a real incline. Beyond
+                # that the rover is on its side and AR_PosControl produces
+                # 0 desired_speed silently (V13 freeze, root-caused
+                # 2026-05-03). See docs/SUMMARY_20260503_1550.md.
+                ORIENTATION_LIMIT_DEG = 15.0
+                orientation_check_failed = False
                 # AUTO-fail forensic capture: if AUTO produces zero throttle
                 # for AUTO_FAIL_LOG_GRAB_S, we disarm + pull the dataflash
                 # log so AR_WPNav internal state (NTUN/WPNV/MOTB/MSG) becomes
@@ -1429,6 +1442,12 @@ def nav_sim(
                                             f"{'' if ahrs_e else '(disabled)'}"
                                             f"[/dim]"
                                         )
+                                elif t == "ATTITUDE" and from_autopilot:
+                                    # Stash for the pre-arm orientation
+                                    # check below. ATTITUDE values are in
+                                    # radians per the MAVLink spec.
+                                    last_attitude_roll_rad = msg.roll
+                                    last_attitude_pitch_rad = msg.pitch
                                 elif t == "STATUSTEXT":
                                     # Always show warnings+ from anything
                                     # on the bus. ArduPilot uses these to
@@ -1472,6 +1491,61 @@ def nav_sim(
                                         )
                                         ekf_healthy_banner_printed = True
 
+                                    # Pre-arm orientation gate. Auto-arm
+                                    # is only safe if the autopilot
+                                    # reports near-level attitude. With
+                                    # |Roll| or |Pitch| beyond
+                                    # ORIENTATION_LIMIT_DEG, AR_PosControl
+                                    # projects desired NE motion through
+                                    # a tilted body frame and silently
+                                    # produces 0 desired_speed — the V13
+                                    # freeze. Fail fast here with a clear
+                                    # actionable message instead of
+                                    # running 15 s and grabbing yet
+                                    # another forensic log of the same
+                                    # problem. See V13 root cause in
+                                    # docs/SUMMARY_20260503_1550.md.
+                                    if (
+                                        healthy
+                                        and not auto_arm_sent
+                                        and not orientation_check_failed
+                                        and last_attitude_roll_rad is not None
+                                        and last_attitude_pitch_rad is not None
+                                    ):
+                                        roll_deg = math.degrees(
+                                            last_attitude_roll_rad
+                                        )
+                                        pitch_deg = math.degrees(
+                                            last_attitude_pitch_rad
+                                        )
+                                        if (
+                                            abs(roll_deg) > ORIENTATION_LIMIT_DEG
+                                            or abs(pitch_deg)
+                                            > ORIENTATION_LIMIT_DEG
+                                        ):
+                                            err_console.print(
+                                                f"[red]Pre-arm orientation "
+                                                f"check failed: "
+                                                f"Roll={roll_deg:+.1f}° "
+                                                f"Pitch={pitch_deg:+.1f}° "
+                                                f"(limit ±"
+                                                f"{ORIENTATION_LIMIT_DEG:.0f}°). "
+                                                f"The autopilot thinks the "
+                                                f"vehicle is on its side. "
+                                                f"AR_PosControl will produce "
+                                                f"zero desired_speed in this "
+                                                f"state and AUTO will freeze. "
+                                                f"Sit the rover/Pixhawk in "
+                                                f"its normal driving "
+                                                f"orientation (gravity along "
+                                                f"body Z axis) and re-run."
+                                                f"[/red]"
+                                            )
+                                            orientation_check_failed = True
+                                            watcher.trip(
+                                                "pre_arm_orientation_failed"
+                                            )
+
                                     # Auto-arm once EKF is healthy.
                                     # Sends MAV_CMD_COMPONENT_ARM_DISARM
                                     # so the operator doesn't need to
@@ -1483,6 +1557,7 @@ def nav_sim(
                                     if (
                                         healthy
                                         and not auto_arm_sent
+                                        and not orientation_check_failed
                                         and not watcher.armed_latch
                                     ):
                                         arm_autopilot(conn)
