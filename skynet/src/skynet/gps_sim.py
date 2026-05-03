@@ -100,6 +100,17 @@ _SIM_VALUES_CANONICAL: dict[str, float] = {
     # spike) before it begins driving in AUTO mode. On a stationary bench sim
     # this push never happens and the rover sits forever. Force 0 to disable.
     "AUTO_KICKSTART": 0,
+    # LOG_FILE_DSRMROT=1 makes the autopilot rotate (seal + start fresh) the
+    # dataflash log on disarm. Default is 0 — disarm leaves the log open,
+    # which means LOG_REQUEST_LIST returns only previously-sealed logs and
+    # the active session's data is invisible. The auto-download path on
+    # AUTO-fail relies on the disarm sealing the freeze log so we can pull
+    # it. Without this, we'd download a stale pre-sim log.
+    "LOG_FILE_DSRMROT": 1,
+    # LOG_DISARMED=1 keeps the log writer running between boot and first
+    # arm. Captures the EKF warmup and AUTO-engage handshake, both of which
+    # are forensically interesting on a freeze.
+    "LOG_DISARMED": 1,
 }
 
 # Param renames between firmware versions: (old_name, new_name).
