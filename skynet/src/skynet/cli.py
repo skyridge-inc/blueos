@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
 import typer
 from rich.console import Console
@@ -67,6 +68,70 @@ def version_callback(value: bool) -> None:
     if value:
         console.print(f"skynet {__version__}")
         raise typer.Exit()
+
+
+def _grab_dataflash_after_auto_fail(
+    conn: Any,
+    console: Console,
+    err_console: Console,
+) -> None:
+    """Disarm and pull the most recent dataflash log to ./logs/.
+
+    Triggered when AUTO mode runs without producing throttle long enough
+    to confirm AR_WPNav is early-returning. Disarming first seals the
+    active log so LOG_ENTRY reports a real (non-zero) size.
+    """
+    from pathlib import Path
+    from pymavlink import mavutil
+    from .log_download import LogDownloadError, download_latest_log
+
+    console.print("[yellow]Disarming to seal active dataflash log...[/yellow]")
+    try:
+        conn.mav.command_long_send(
+            conn.target_system,
+            conn.target_component,
+            mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+            0,
+            0,  # 0 = disarm
+            0,
+            0, 0, 0, 0, 0,
+        )
+    except Exception as e:
+        err_console.print(f"[red]Disarm send failed: {e}[/red]")
+
+    # Drain stale traffic so the log_request_list response isn't buried
+    # behind seconds of HEARTBEAT/SYS_STATUS backlog.
+    drain_deadline = time.monotonic() + 1.5
+    while time.monotonic() < drain_deadline:
+        if conn.recv_match(blocking=True, timeout=0.1) is None:
+            break
+
+    dest_dir = Path("./logs").resolve()
+    console.print(
+        f"[bold]Downloading latest dataflash log to {dest_dir}/...[/bold]"
+    )
+
+    last_pct = -1
+
+    def _progress(done: int, total: int) -> None:
+        nonlocal last_pct
+        pct = int(100 * done / max(total, 1))
+        if pct != last_pct and pct % 5 == 0:
+            console.print(
+                f"  log download: {done}/{total} bytes ({pct}%)"
+            )
+            last_pct = pct
+
+    try:
+        path = download_latest_log(conn, dest_dir, progress_cb=_progress)
+        console.print(f"[green]Dataflash log saved: {path}[/green]")
+        console.print(
+            "[cyan]Inspect with: mavlogdump.py "
+            f"{path}  |  or load in MissionPlanner / "
+            "https://plot.ardupilot.org[/cyan]"
+        )
+    except LogDownloadError as e:
+        err_console.print(f"[red]Log download failed: {e}[/red]")
 
 
 @app.callback()
@@ -802,7 +867,7 @@ def nav_sim(
     )
     from .params import fetch_all_params
 
-    REBOOT_WAIT = 8  # seconds to wait for autopilot reboot
+    REBOOT_WAIT = 12  # seconds to wait for autopilot reboot (real HW: 6-8s; SITL: 9-10s)
 
     max_speed_mps = ground_speed * MPH_TO_MPS
 
@@ -954,15 +1019,27 @@ def nav_sim(
             sim_ctx = SimParamContext(conn, device)
             sim_ctx.__enter__()
 
-            # GPS_TYPE requires a reboot to take effect.
-            console.print("[bold]Rebooting autopilot for GPS_TYPE change...[/bold]")
-            reboot_autopilot(conn)
+            # GPS_TYPE requires a reboot to take effect on real HW. SITL
+            # doesn't actually re-exec — it closes the SERIAL0 connection
+            # and re-inits. Setting SKYNET_SKIP_REBOOT=1 (env var) skips
+            # the reboot entirely and avoids the mavlink_connection
+            # respawn-window race that times out on a SITL listener.
+            if os.environ.get("SKYNET_SKIP_REBOOT"):
+                console.print(
+                    "[yellow]SKYNET_SKIP_REBOOT set — skipping reboot. "
+                    "GPS_TYPE change requires the autopilot to have been "
+                    "started with the param already in place.[/yellow]"
+                )
+            else:
+                console.print("[bold]Rebooting autopilot for GPS_TYPE change...[/bold]")
+                reboot_autopilot(conn)
 
         # Connection is dead after reboot — wait for autopilot to come back.
-        with console.status(
-            f"Waiting {REBOOT_WAIT}s for autopilot reboot..."
-        ):
-            _time.sleep(REBOOT_WAIT)
+        if not os.environ.get("SKYNET_SKIP_REBOOT"):
+            with console.status(
+                f"Waiting {REBOOT_WAIT}s for autopilot reboot..."
+            ):
+                _time.sleep(REBOOT_WAIT)
 
         # ── Phase 2: reconnect and run the sim loop ──
         with mavlink_connection(device, baud=baud, timeout=30.0) as conn:
@@ -1129,7 +1206,12 @@ def nav_sim(
                 auto_engaged_at: float | None = None
                 ever_saw_throttle = False
                 auto_arm_sent = False
-                guided_fallback_active = False
+                # AUTO-fail forensic capture: if AUTO produces zero throttle
+                # for AUTO_FAIL_LOG_GRAB_S, we disarm + pull the dataflash
+                # log so AR_WPNav internal state (NTUN/WPNV/MOTB/MSG) becomes
+                # inspectable offline. See docs/SIM_AUTOPILOT_ISSUE_V13.md.
+                AUTO_FAIL_LOG_GRAB_S = 15.0
+                auto_fail_log_grab_pending = False
                 motor_test_done = False
                 motor_test_started_at: float | None = None
 
@@ -1866,6 +1948,30 @@ def nav_sim(
                                     "[yellow]Autopilot disarmed.[/yellow]"
                                 )
 
+                            # AUTO-fail forensic trigger: nav engaged, AUTO
+                            # mode, but VFR_HUD.throttle stayed 0 across the
+                            # whole window → guard clause in
+                            # AR_WPNav::update() is firing every tick. Trip
+                            # the watcher so the post-loop block can disarm
+                            # and pull the dataflash log.
+                            if (
+                                nav_engaged
+                                and drive_mode_normalised == "auto"
+                                and auto_engaged_at is not None
+                                and not ever_saw_throttle
+                                and not auto_fail_log_grab_pending
+                                and (_time.monotonic() - auto_engaged_at)
+                                > AUTO_FAIL_LOG_GRAB_S
+                            ):
+                                auto_fail_log_grab_pending = True
+                                console.print(
+                                    "[red]AUTO produced zero throttle for "
+                                    f"{AUTO_FAIL_LOG_GRAB_S:.0f}s — will "
+                                    "disarm and pull dataflash log for "
+                                    "AR_WPNav forensic analysis.[/red]"
+                                )
+                                watcher.trip("auto_throttle_fail")
+
                             watcher.check_duration()
 
                             elapsed = _time.monotonic() - tick_start
@@ -1878,6 +1984,9 @@ def nav_sim(
                 console.print(
                     f"[green]Sim stopped: {watcher.stop_reason or 'clean exit'}[/green]"
                 )
+
+                if auto_fail_log_grab_pending:
+                    _grab_dataflash_after_auto_fail(conn, console, err_console)
             finally:
                 # Restore original params and reboot to re-enable real GPS.
                 console.print("[bold]Restoring original params...[/bold]")
