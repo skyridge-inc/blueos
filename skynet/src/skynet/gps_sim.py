@@ -220,6 +220,18 @@ class SkidSteerModel:
         # exactly that (heading drifted away from WpBrg=15° instead of
         # toward it). AckermannModel already gets this right via tan(steer).
         omega = self.max_speed_mps * (left - right) / self.track_width_m
+        # Cap the kinematic pivot rate. With max_speed=0.894 m/s and
+        # track_width=0.5 m the raw formula gives ~3.58 rad/s (~205°/s)
+        # at full PWM differential, far above ArduPilot's WP_PIVOT_RATE
+        # default of 60°/s. The autopilot still happily commands max
+        # PWM differential and our HIL kinematic ran at 200°/s — each
+        # 15 Hz tick rotated ~13.7°, well past the EKF's measurement
+        # gate, so vision yaw was rejected as outlier and the autopilot
+        # kept pivoting through full revolutions in QGC. Capping at
+        # ~60°/s (matching WP_PIVOT_RATE) keeps each kinematic step
+        # within ~4° at 15 Hz, which the EKF accepts cleanly.
+        MAX_OMEGA_RPS = math.radians(60.0)
+        omega = max(-MAX_OMEGA_RPS, min(MAX_OMEGA_RPS, omega))
 
         self.heading_deg = (self.heading_deg + math.degrees(omega * dt)) % 360.0
         hdg_rad = math.radians(self.heading_deg)
