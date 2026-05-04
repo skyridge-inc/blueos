@@ -7,5 +7,5 @@ echo "Uploaded the waypoint mission!"
 
 # Run the simulator
 echo "About to run the simulator now..."
-skynet nav sim -d tcp:sky1.netbird.cloud:5760 -y -v --duration 600 --manual-settle-time 30 2>&1 | tee /tmp/sim.log
+skynet nav sim -d tcp:sky1.netbird.cloud:5760 -y -v --duration 600 2>&1 | tee /tmp/sim.log
 echo "Ran the simulator!"

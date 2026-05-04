@@ -787,7 +787,7 @@ def nav_sim(
                 "EKF-quiet window. Set to 0 to skip the settle."
             ),
         ),
-    ] = 30.0,
+    ] = 3.0,
     duration: Annotated[
         Optional[float],
         typer.Option("--duration", help="Wall-clock safety timeout (s)."),
@@ -980,28 +980,20 @@ def nav_sim(
                 raise typer.Exit(1)
 
             # Spawn 10 m behind WP1 along the WP1→WP2 back-projection,
-            # with heading aligned to the bearing toward WP1. The 10 m
-            # distance (vs 3–5 m in V4–V9) gives the L1 controller a
-            # meaningful track segment to follow.
+            # with heading 90° CW from the bearing toward WP1. The
+            # 10 m distance (vs 3–5 m in V4–V9) gives the L1 controller
+            # a meaningful track segment to follow, and the 90° offset
+            # creates a yaw error that forces AUTO to perform an entry
+            # pivot — exercising the EKF yaw-tracking path (vision yaw
+            # vs gyro on a stationary Pixhawk) that's load-bearing for
+            # any mid-mission turn.
             #
-            # Historical note: through V10–V13 the spawn heading was
-            # set 90° CW from the track bearing, deliberately creating
-            # a yaw error to exercise the nav controller's turning +
-            # throttle paths together. That was useful while debugging
-            # the V13 freeze in the non-pivot path. With the freeze
-            # fixed, the 90° offset is now a *liability*: it forces a
-            # pivot before any forward motion can happen, and on a
-            # stationary HIL Pixhawk the EKF's gyro reads zero rotation
-            # with high confidence, refusing to track the simulated
-            # vision yaw — the autopilot pivots forever without ever
-            # reaching the target heading. See SUMMARY_20260504_*.md
-            # for the analysis. Aligning the spawn heading to WP1
-            # avoids this entirely: AUTO has only forward translation
-            # to do, which the EKF *can* track via GPS_INPUT velocity.
-            # Future waypoints requiring turns will still hit the
-            # gyro-vs-vision conflict; that's the deeper issue
-            # addressed by EK3_GYRO_P_NSE=0.05 + VISO_YAW_M_NSE=0.001
-            # in SIM_PARAMS — see gps_sim.py:67-95 for the gain math.
+            # The 2026-05-04 session previously aligned this to 0° to
+            # work around the EKF lag during pivots, but with
+            # COMPASS_USE*=0 + EK3_GYRO_P_NSE=0.1 + VISO_YAW_M_NSE=0.001
+            # in SIM_PARAMS the EKF now tracks vision yaw cleanly, so
+            # the 90° entry pivot is back to being a useful exerciser
+            # rather than a stall.
             last_seq = len(mission) - 1
             target_lat, target_lon = mission[start_seq]
             if start_seq + 1 <= last_seq:
@@ -1011,14 +1003,13 @@ def nav_sim(
             start_lat, start_lon = offset_spawn_behind_waypoint(
                 target_lat, target_lon, next_lat, next_lon, distance_m=10.0
             )
-            # Compute heading: aligned to the bearing toward WP1, so
-            # AUTO can drive forward without pivoting.
+            # Compute heading: 90° CW from the bearing toward WP1.
             import math as _math
             _cos = _math.cos(_math.radians(start_lat))
             _dy = (target_lat - start_lat) * 111_320.0
             _dx = (target_lon - start_lon) * 111_320.0 * _cos
             _bearing_to_wp1 = _math.degrees(_math.atan2(_dx, _dy)) % 360.0
-            spawn_heading = _bearing_to_wp1
+            spawn_heading = (_bearing_to_wp1 + 90.0) % 360.0
 
             table = Table(title="Sim config")
             table.add_column("Setting", style="bold")
@@ -1193,8 +1184,8 @@ def nav_sim(
                 )
 
             try:
-                # Use the geometry-derived heading (aligned to bearing
-                # toward WP1) rather than reading the autopilot's
+                # Use the geometry-derived heading (90° CW from
+                # bearing to WP1) rather than reading the autopilot's
                 # ATTITUDE. The ATTITUDE read (V5 fix) returned DCM-
                 # fallback 0° before EKF yaw alignment — using geometry
                 # avoids that race entirely and gives the sim
@@ -1203,8 +1194,7 @@ def nav_sim(
                 start_heading = spawn_heading
                 console.print(
                     f"[green]Start heading:[/green] {start_heading:.1f}° "
-                    "(from spawn geometry — aligned to bearing to WP1, "
-                    "no pivot needed)"
+                    "(from spawn geometry — 90° CW from bearing to WP1)"
                 )
 
                 if drive_type == DRIVE_SKID_STEER:
