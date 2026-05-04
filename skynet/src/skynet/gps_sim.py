@@ -63,9 +63,19 @@ _SIM_VALUES_CANONICAL: dict[str, float] = {
     # log). These three values tell the EKF the vision source has
     # 50 ms of pipeline delay, ~10 cm position noise, and ~3° yaw
     # noise — all reasonable defaults for a simulated source.
-    "VISO_DELAY_MS": 50,
+    # On a stationary bench the real gyros report ~0 rotation with
+    # very low noise, which fights the kinematic vision yaw and makes
+    # the EKF lag the simulated heading by orders of magnitude (rover
+    # pivot at ~200 deg/s in the kinematic, ~1 deg/s in the EKF). The
+    # tighter values below trade some sim believability for visible
+    # convergence: the EKF accepts each VISION_POSITION_ESTIMATE.yaw
+    # nearly at face value, so QGC shows the heading rotate in real
+    # time and AUTO can finish its pivot in seconds instead of
+    # minutes-to-never. Position noise stays loose because the GPS
+    # path is the primary position source (EK3_SRC1_POSXY=3).
+    "VISO_DELAY_MS": 10,
     "VISO_POS_M_NSE": 0.1,
-    "VISO_YAW_M_NSE": 0.05,
+    "VISO_YAW_M_NSE": 0.005,
     # Disable all GPS alignment pre-checks. The EKF default requires the
     # GPS driver to populate sat count, HDop, position error, speed
     # error, and yaw error fields — but the AP_GPS_MAV driver doesn't
