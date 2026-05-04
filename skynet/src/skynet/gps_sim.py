@@ -201,9 +201,15 @@ class SkidSteerModel:
         right = max(-1.0, min(1.0, right_norm))
 
         v = self.max_speed_mps * (left + right) / 2.0
-        omega = (
-            self.max_speed_mps * (right - left) / self.track_width_m
-        )  # rad/s
+        # Compass convention: heading_deg increases CW (right turn). For a
+        # differential-drive robot, "left wheel forward, right wheel reverse"
+        # rotates the body to the right (CW) → heading must increase →
+        # omega = max_speed * (left - right) / track_width. The reversed
+        # subtraction order would invert pivot direction so AUTO never
+        # converges on its target bearing — the V13 verify run reproduced
+        # exactly that (heading drifted away from WpBrg=15° instead of
+        # toward it). AckermannModel already gets this right via tan(steer).
+        omega = self.max_speed_mps * (left - right) / self.track_width_m
 
         self.heading_deg = (self.heading_deg + math.degrees(omega * dt)) % 360.0
         hdg_rad = math.radians(self.heading_deg)
