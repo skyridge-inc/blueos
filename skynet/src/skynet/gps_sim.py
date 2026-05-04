@@ -65,17 +65,66 @@ _SIM_VALUES_CANONICAL: dict[str, float] = {
     # noise — all reasonable defaults for a simulated source.
     # On a stationary bench the real gyros report ~0 rotation with
     # very low noise, which fights the kinematic vision yaw and makes
-    # the EKF lag the simulated heading by orders of magnitude (rover
-    # pivot at ~200 deg/s in the kinematic, ~1 deg/s in the EKF). The
-    # tighter values below trade some sim believability for visible
-    # convergence: the EKF accepts each VISION_POSITION_ESTIMATE.yaw
-    # nearly at face value, so QGC shows the heading rotate in real
-    # time and AUTO can finish its pivot in seconds instead of
-    # minutes-to-never. Position noise stays loose because the GPS
-    # path is the primary position source (EK3_SRC1_POSXY=3).
+    # the EKF lag the simulated heading by orders of magnitude.
+    #
+    # Math: per tick (~67 ms at 15 Hz) the EKF computes Kalman gain
+    # K = state_var / (state_var + meas_var). Defaults give
+    # state_var ≈ (EK3_GYRO_P_NSE × dt)² ≈ (0.015 × 0.067)² = 1e-6
+    # rad² and meas_var = VISO_YAW_M_NSE² = 0.005² = 2.5e-5 rad².
+    # Resulting gain K ≈ 0.038 — the EKF only updates by 3.8% of each
+    # vision innovation per tick. At 6°/s sim rotation this means EKF
+    # tracks at ~0.23°/s, so a 99° pivot would take ~7 minutes of
+    # wall-clock to converge — observed verbatim on 2026-05-04 at WP3.
+    #
+    # Fix (part 1): lower VISO_YAW_M_NSE to 0.001 (meas_var = 1e-6)
+    # AND raise EK3_GYRO_P_NSE to 0.1 (state_var ≈ 4.5e-5). Predicted
+    # gain K ≈ 0.98. Both knobs are needed: lowering one alone gives
+    # K ≈ 0.5, which still lags noticeably on hard turns.
+    #
+    # Fix (part 2): set COMPASS_USE/USE2/USE3 = 0. Even with
+    # EK3_SRC1_YAW=6 selecting ExternalNav as primary, ArduPilot still
+    # fuses compass innovations whenever any COMPASS_USE* is non-zero.
+    # On a stationary HIL Pixhawk the compass reads steady while
+    # vision rotates — the EKF blends both and tracks vision at ~38%
+    # gain instead of ~92%, eventually tripping Critical: EKF
+    # variance. Disabling compass removes the second yaw source.
+    #
+    # Param naming: ArduRover 4.6.3 calls this EK3_GYRO_P_NSE (with
+    # the O). An earlier draft of this comment used "EK3_GYR_P_NSE"
+    # (no O) — the autopilot rejected that name silently and the gyro
+    # half of the fix didn't land, so the EKF tracked vision at the
+    # default 3.8% gain on the next run too. Verified against the
+    # rover's own param dump on 2026-05-04.
+    #
+    # Position noise stays loose (0.1 m) because GPS is the primary
+    # position source (EK3_SRC1_POSXY=3).
     "VISO_DELAY_MS": 10,
     "VISO_POS_M_NSE": 0.1,
-    "VISO_YAW_M_NSE": 0.005,
+    "VISO_YAW_M_NSE": 0.001,
+    # Tell the EKF its gyros are noisier than they really are. On a
+    # stationary HIL Pixhawk the gyros are pristinely zero, but the
+    # SIMULATED rover is rotating — so we need the EKF to weight gyro
+    # predictions less and vision yaw measurements more. See the
+    # paragraph above for the gain math. Default is 1.5e-2 rad/s;
+    # 1e-1 (~6.7× larger) is enough to bring the gain to ~0.95+
+    # against VISO_YAW_M_NSE=0.001.
+    "EK3_GYRO_P_NSE": 0.1,
+    # Disable compass yaw fusion entirely. Even with EK3_SRC1_YAW=6
+    # (ExternalNav) selecting vision as the primary yaw source, the
+    # EKF still runs compass innovations whenever COMPASS_USE* is
+    # non-zero. On a stationary HIL Pixhawk the physical compass
+    # reads a fixed heading while the sim is rotating the virtual
+    # heading via VISION_POSITION_ESTIMATE — the EKF gets pulled
+    # between two contradictory sources, tracks vision yaw at half
+    # speed (or worse), and eventually trips a Critical: EKF
+    # variance failsafe (observed 2026-05-04 14:45:46 in QGC log).
+    # Forcing COMPASS_USE=0 removes the second yaw source, so the
+    # EKF only fuses what the sim is actually feeding it.
+    # SimParamContext sidecar restores the original values on exit,
+    # so the rover's compass config is unchanged once the sim ends.
+    "COMPASS_USE": 0,
+    "COMPASS_USE2": 0,
+    "COMPASS_USE3": 0,
     # Disable all GPS alignment pre-checks. The EKF default requires the
     # GPS driver to populate sat count, HDop, position error, speed
     # error, and yaw error fields — but the AP_GPS_MAV driver doesn't
@@ -88,9 +137,13 @@ _SIM_VALUES_CANONICAL: dict[str, float] = {
     # AP_GPS_MAV's auto-detect can fail over a laggy tunnel; 50 ms is
     # a safe pessimistic value for a NetBird-proxied link.
     "GPS_DELAY_MS": 50,
-    # COMPASS_USE/USE2/USE3 intentionally not overridden. The operator's
-    # rover has compasses disabled; we don't fight that configuration
-    # because GSF gives us yaw without needing any compass.
+    # COMPASS_USE/USE2/USE3 are now overridden to 0 above (with the
+    # VISO/EK3 noise tuning) — see that block for the full rationale.
+    # Earlier versions of this file claimed "the operator's rover has
+    # compasses disabled," but the 2026-05-04 run proved the EKF was
+    # still fusing compass innovations regardless, polluting yaw
+    # tracking. Don't trust assumptions about live param state; pin
+    # what we need.
     # Bench-safe failsafe relaxations — we have no RC, no GCS heartbeat
     # guarantee, and the sim may legitimately show zero motion while
     # under throttle (before the autopilot acts on servo commands).
@@ -186,6 +239,7 @@ class SkidSteerModel:
     start_heading_deg: float = 0.0
     max_speed_mps: float = 2.0 * MPH_TO_MPS
     track_width_m: float = 0.5
+    max_rotation_dps: float = 6.0
 
     lat: float = field(init=False)
     lon: float = field(init=False)
@@ -227,11 +281,12 @@ class SkidSteerModel:
         # PWM differential and our HIL kinematic ran at 200°/s — each
         # 15 Hz tick rotated ~13.7°, well past the EKF's measurement
         # gate, so vision yaw was rejected as outlier and the autopilot
-        # kept pivoting through full revolutions in QGC. Capping at
-        # ~60°/s (matching WP_PIVOT_RATE) keeps each kinematic step
-        # within ~4° at 15 Hz, which the EKF accepts cleanly.
-        MAX_OMEGA_RPS = math.radians(60.0)
-        omega = max(-MAX_OMEGA_RPS, min(MAX_OMEGA_RPS, omega))
+        # kept pivoting through full revolutions in QGC. The cap is
+        # exposed as `max_rotation_dps` (default 6°/s) so callers can
+        # trade pivot wall-clock duration against EKF vision-yaw gate
+        # headroom without editing the model.
+        max_omega_rps = math.radians(self.max_rotation_dps)
+        omega = max(-max_omega_rps, min(max_omega_rps, omega))
 
         self.heading_deg = (self.heading_deg + math.degrees(omega * dt)) % 360.0
         hdg_rad = math.radians(self.heading_deg)

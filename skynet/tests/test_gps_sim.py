@@ -999,8 +999,51 @@ class TestSimParamsFlags:
 
     def test_viso_yaw_noise_set(self):
         """VISO_YAW_M_NSE must be set explicitly so the EKF knows how
-        much to trust the vision yaw."""
-        assert SIM_PARAMS["VISO_YAW_M_NSE"] == 0.005
+        much to trust the vision yaw. Tightened from 0.005 to 0.001 on
+        2026-05-04 to fix EKF-yaw-tracking lag during AUTO pivots: at
+        0.005 the Kalman gain on vision yaw was only ~3.8% per tick,
+        making the autopilot's EKF heading lag the simulated kinematic
+        by ~30×. Pairs with EK3_GYRO_P_NSE=0.05; both knobs together
+        give gain ≈ 0.92."""
+        assert SIM_PARAMS["VISO_YAW_M_NSE"] == 0.001
+
+    def test_ek3_gyro_p_nse_raised(self):
+        """EK3_GYRO_P_NSE must be raised above default to make the EKF
+        weight gyro predictions less and vision yaw more. Default is
+        1.5e-2; 1e-1 is ~6.7× larger and the second half of the EKF
+        yaw-tracking fix (with VISO_YAW_M_NSE=0.001 above). Originally
+        set to 0.05; raised to 0.1 on 2026-05-04 after measurements
+        showed effective tracking gain was ~0.38 rather than the
+        predicted ~0.92.
+
+        Note the spelling: ArduRover 4.6.3 calls this EK3_GYRO_P_NSE
+        (with the O). An earlier version of this fix used the wrong
+        spelling EK3_GYR_P_NSE (no O), which the autopilot silently
+        rejected as unknown — the param never got written, default
+        gyro tuning stayed in place, and AUTO pivots stalled at the
+        first sharp turn. The test name and assertion both pin the
+        correct spelling to keep that regression from coming back."""
+        assert SIM_PARAMS["EK3_GYRO_P_NSE"] == 0.1
+        # Also assert the wrong spelling is NOT in SIM_PARAMS, so a
+        # future maintainer can't reintroduce the typo without this
+        # test screaming.
+        assert "EK3_GYR_P_NSE" not in SIM_PARAMS
+
+    def test_compass_disabled_during_sim(self):
+        """COMPASS_USE/USE2/USE3 must all be 0 during sim. With
+        EK3_SRC1_YAW=6 (ExternalNav) selecting vision yaw as the
+        primary source, ArduPilot still runs compass innovations
+        whenever COMPASS_USE* is non-zero. On a stationary HIL Pixhawk
+        the compass reads a fixed heading while vision rotates with
+        the kinematic — the EKF gets pulled between two contradictory
+        yaw sources, tracks vision at ~38% gain instead of ~92%, and
+        eventually trips Critical: EKF variance (observed at the
+        WP3 turn on 2026-05-04). Forcing all three to 0 removes the
+        compass tug-of-war and lets EKF track vision cleanly. The
+        SimParamContext sidecar restores the originals on exit."""
+        assert SIM_PARAMS["COMPASS_USE"] == 0
+        assert SIM_PARAMS["COMPASS_USE2"] == 0
+        assert SIM_PARAMS["COMPASS_USE3"] == 0
 
     def test_no_more_gsf_options(self):
         """EK3_SRC_OPTIONS must NOT be set (was 2 for GSF). With
@@ -1027,13 +1070,24 @@ class TestSimParamsFlags:
         pessimistic-safe value for proxied links."""
         assert SIM_PARAMS["GPS_DELAY_MS"] == 50
 
-    def test_no_compass_overrides(self):
-        """COMPASS_USE/USE2/USE3 must NOT be in SIM_PARAMS. GSF yaw
-        works without any compass at all, so we don't fight the
-        operator's (typically disabled) compass configuration."""
-        assert "COMPASS_USE" not in SIM_PARAMS
-        assert "COMPASS_USE2" not in SIM_PARAMS
-        assert "COMPASS_USE3" not in SIM_PARAMS
+    def test_compass_disabled_in_sim_params(self):
+        """COMPASS_USE/USE2/USE3 must be 0 in SIM_PARAMS. Earlier
+        versions of this test asserted the inverse ("compass NOT in
+        SIM_PARAMS, GSF works without compass"), but the 2026-05-04
+        run proved that even with EK3_SRC1_YAW=6 selecting ExternalNav
+        as the primary yaw source, the EKF still fuses compass
+        innovations whenever any COMPASS_USE* is non-zero — and on a
+        stationary HIL Pixhawk where the compass reads steady but the
+        sim rotates the virtual heading, that compass tug-of-war
+        cripples vision-yaw tracking and eventually trips Critical:
+        EKF variance. The duplicate test test_compass_disabled_during_sim
+        above covers this from the EKF-tracking-fix angle; this test
+        keeps the original guard about compass behavior in case a
+        future maintainer tries to "clean up" by removing the
+        overrides."""
+        assert SIM_PARAMS["COMPASS_USE"] == 0
+        assert SIM_PARAMS["COMPASS_USE2"] == 0
+        assert SIM_PARAMS["COMPASS_USE3"] == 0
 
 
 class TestOffsetSpawnBehindWaypoint:

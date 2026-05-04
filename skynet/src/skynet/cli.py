@@ -755,6 +755,39 @@ def nav_sim(
             "--max-steer-angle", help="Max steering angle in degrees (Ackermann only)."
         ),
     ] = 30.0,
+    rotation_speed: Annotated[
+        float,
+        typer.Option(
+            "--rotation-speed",
+            help=(
+                "Max kinematic pivot rate in degrees per second "
+                "(skid-steer only). Lower values keep each tick's "
+                "yaw delta inside the EKF's vision-yaw measurement "
+                "gate; higher values let pivots finish faster in "
+                "wall-clock time."
+            ),
+        ),
+    ] = 6.0,
+    manual_settle_time: Annotated[
+        float,
+        typer.Option(
+            "--manual-settle-time",
+            help=(
+                "Seconds to hold the autopilot stationary after the "
+                "motor test, while the simulator continues streaming "
+                "GPS_INPUT and VISION_POSITION_ESTIMATE, before "
+                "switching to AUTO. Lets the autopilot's EKF converge "
+                "on a stable position/yaw estimate from sim sensors "
+                "before AUTO engages. The flag is named "
+                "--manual-settle-time for backward compatibility, but "
+                "the settle now runs in HOLD mode rather than MANUAL: "
+                "MANUAL is RC-passthrough and unsafe on rovers with "
+                "any real RC source (the rover would drive during the "
+                "settle); HOLD ignores RC entirely and gives the same "
+                "EKF-quiet window. Set to 0 to skip the settle."
+            ),
+        ),
+    ] = 30.0,
     duration: Annotated[
         Optional[float],
         typer.Option("--duration", help="Wall-clock safety timeout (s)."),
@@ -857,6 +890,7 @@ def nav_sim(
         warn_on_zero_speed_params,
     )
 
+    ROVER_MODE_MANUAL = 0
     ROVER_MODE_AUTO = 10
     ROVER_MODE_HOLD = 4
     ROVER_MODE_GUIDED = 15
@@ -946,13 +980,28 @@ def nav_sim(
                 raise typer.Exit(1)
 
             # Spawn 10 m behind WP1 along the WP1→WP2 back-projection,
-            # with heading 90° CW from the track bearing. The 10 m
+            # with heading aligned to the bearing toward WP1. The 10 m
             # distance (vs 3–5 m in V4–V9) gives the L1 controller a
-            # meaningful track segment to follow, and the perpendicular
-            # heading creates a yaw error that forces the nav controller
-            # to compute both a turning correction AND forward throttle.
-            # See docs/SIM_AUTOPILOT_ISSUE_V10.md for the analysis of
-            # why the V9 perpendicular spawn was degenerate.
+            # meaningful track segment to follow.
+            #
+            # Historical note: through V10–V13 the spawn heading was
+            # set 90° CW from the track bearing, deliberately creating
+            # a yaw error to exercise the nav controller's turning +
+            # throttle paths together. That was useful while debugging
+            # the V13 freeze in the non-pivot path. With the freeze
+            # fixed, the 90° offset is now a *liability*: it forces a
+            # pivot before any forward motion can happen, and on a
+            # stationary HIL Pixhawk the EKF's gyro reads zero rotation
+            # with high confidence, refusing to track the simulated
+            # vision yaw — the autopilot pivots forever without ever
+            # reaching the target heading. See SUMMARY_20260504_*.md
+            # for the analysis. Aligning the spawn heading to WP1
+            # avoids this entirely: AUTO has only forward translation
+            # to do, which the EKF *can* track via GPS_INPUT velocity.
+            # Future waypoints requiring turns will still hit the
+            # gyro-vs-vision conflict; that's the deeper issue
+            # addressed by EK3_GYRO_P_NSE=0.05 + VISO_YAW_M_NSE=0.001
+            # in SIM_PARAMS — see gps_sim.py:67-95 for the gain math.
             last_seq = len(mission) - 1
             target_lat, target_lon = mission[start_seq]
             if start_seq + 1 <= last_seq:
@@ -962,13 +1011,14 @@ def nav_sim(
             start_lat, start_lon = offset_spawn_behind_waypoint(
                 target_lat, target_lon, next_lat, next_lon, distance_m=10.0
             )
-            # Compute heading: 90° CW from the bearing toward WP1.
+            # Compute heading: aligned to the bearing toward WP1, so
+            # AUTO can drive forward without pivoting.
             import math as _math
             _cos = _math.cos(_math.radians(start_lat))
             _dy = (target_lat - start_lat) * 111_320.0
             _dx = (target_lon - start_lon) * 111_320.0 * _cos
             _bearing_to_wp1 = _math.degrees(_math.atan2(_dx, _dy)) % 360.0
-            spawn_heading = (_bearing_to_wp1 + 90.0) % 360.0
+            spawn_heading = _bearing_to_wp1
 
             table = Table(title="Sim config")
             table.add_column("Setting", style="bold")
@@ -1104,6 +1154,13 @@ def nav_sim(
                     "VISO_POS_M_NSE",
                     "VISO_YAW_M_NSE",
                     "DISARM_DELAY",
+                    # EK3_GYRO_P_NSE always exists post-boot, but
+                    # listing it here is defense-in-depth: if the
+                    # gap-detected fetch happens to miss it, the late
+                    # write picks it up. Without this, a missed fetch
+                    # silently leaves the EKF on default tuning and
+                    # AUTO pivots stall (observed 2026-05-04).
+                    "EK3_GYRO_P_NSE",
                 )
                 late_writes: dict[str, float] = {}
                 for name in late_names:
@@ -1136,16 +1193,18 @@ def nav_sim(
                 )
 
             try:
-                # Use the geometry-derived heading (90° CW from bearing
-                # to WP1) rather than reading the autopilot's ATTITUDE.
-                # The ATTITUDE read (V5 fix) returned DCM-fallback 0°
-                # before EKF yaw alignment — using geometry avoids that
-                # race entirely and gives the sim authoritative heading
-                # via GPS_INPUT.yaw + VISION_POSITION_ESTIMATE.yaw.
+                # Use the geometry-derived heading (aligned to bearing
+                # toward WP1) rather than reading the autopilot's
+                # ATTITUDE. The ATTITUDE read (V5 fix) returned DCM-
+                # fallback 0° before EKF yaw alignment — using geometry
+                # avoids that race entirely and gives the sim
+                # authoritative heading via GPS_INPUT.yaw +
+                # VISION_POSITION_ESTIMATE.yaw.
                 start_heading = spawn_heading
                 console.print(
                     f"[green]Start heading:[/green] {start_heading:.1f}° "
-                    "(from spawn geometry — 90° CW from bearing to WP1)"
+                    "(from spawn geometry — aligned to bearing to WP1, "
+                    "no pivot needed)"
                 )
 
                 if drive_type == DRIVE_SKID_STEER:
@@ -1155,6 +1214,7 @@ def nav_sim(
                         start_heading_deg=start_heading,
                         max_speed_mps=max_speed_mps,
                         track_width_m=track_width,
+                        max_rotation_dps=rotation_speed,
                     )
                 else:
                     model = AckermannModel(
@@ -1233,6 +1293,17 @@ def nav_sim(
                 auto_fail_log_grab_pending = False
                 motor_test_done = False
                 motor_test_started_at: float | None = None
+                # EKF settle window: after the motor test finishes,
+                # park the autopilot in HOLD for `manual_settle_time`
+                # seconds while continuing to stream GPS_INPUT/
+                # VISION_POSITION_ESTIMATE so the EKF can converge on a
+                # stable position/yaw estimate before AUTO engages. The
+                # variable is named `manual_settle_*` for backward
+                # compat with the --manual-settle-time CLI flag, but
+                # the settle now uses HOLD because MANUAL is RC-
+                # passthrough and unsafe with any real RC source. None
+                # until settle starts; monotonic timestamp once it does.
+                manual_settle_start_ts: float | None = None
 
                 # Rolling counters for the periodic stats line. We track
                 # GPS_INPUT emits (what the sim *sent*) vs LOCAL_POSITION_NED
@@ -1828,7 +1899,6 @@ def nav_sim(
                                 and not holding
                                 and not nav_engaged
                             ):
-                                ROVER_MODE_MANUAL = 0
                                 console.print(
                                     "[bold cyan]── Motor test: "
                                     "MANUAL + RC override ──[/bold cyan]"
@@ -1930,15 +2000,120 @@ def nav_sim(
                             # can silently fail the first do_nav_wp.
                             # HOLD needs no navigation state, so we can
                             # safely linger there until flags=831.
-                            if watcher.armed_latch and not holding and not nav_engaged:
-                                set_rover_mode(conn, ROVER_MODE_HOLD)
-                                console.print(
-                                    "[cyan]Forced mode=HOLD. "
-                                    "Switching to "
-                                    f"{drive_mode_normalised.upper()} "
-                                    "once EKF reports flags=831.[/cyan]"
-                                )
-                                holding = True
+                            #
+                            # Before transitioning to AUTO, hold the
+                            # autopilot in HOLD for `manual_settle_time`
+                            # seconds while we keep streaming GPS_INPUT
+                            # and VISION_POSITION_ESTIMATE so the EKF
+                            # can converge on a stable position/yaw
+                            # estimate from the simulated sensors.
+                            #
+                            # HOLD is the right mode for the settle
+                            # window even though the user-facing flag
+                            # is called --manual-settle-time:
+                            # - The EKF receives the same sensor data
+                            #   regardless of mode (GPS_INPUT and
+                            #   VISION_POSITION_ESTIMATE flow at 15Hz
+                            #   in any mode).
+                            # - HOLD's nav controller commands
+                            #   desired_speed=0, desired_turn_rate=0,
+                            #   so the rover sits still — exactly what
+                            #   we want during EKF convergence.
+                            # - MANUAL is RC-passthrough: any real RC
+                            #   source on the rover (transmitter, stuck
+                            #   SBUS receiver) drives the motors during
+                            #   MANUAL. RC override via MAVLink is not
+                            #   reliable enough on a congested link to
+                            #   guarantee neutral output, as observed
+                            #   on 2026-05-04 where 30s of MANUAL
+                            #   produced 30s of full-throttle motion.
+                            # - HOLD ignores RC entirely, so this whole
+                            #   class of failures is impossible.
+                            #
+                            # Set --manual-settle-time=0 to skip the
+                            # settle window.
+                            if (
+                                watcher.armed_latch
+                                and not holding
+                                and not nav_engaged
+                                and motor_test_done
+                            ):
+                                if manual_settle_time <= 0.0:
+                                    settle_done = True
+                                elif manual_settle_start_ts is None:
+                                    set_rover_mode(conn, ROVER_MODE_HOLD)
+                                    manual_settle_start_ts = (
+                                        _time.monotonic()
+                                    )
+                                    console.print(
+                                        f"[cyan]EKF settle: holding "
+                                        f"HOLD for "
+                                        f"{manual_settle_time:.1f}s "
+                                        f"while streaming GPS_INPUT/"
+                                        f"VISION_POSITION_ESTIMATE so "
+                                        f"the autopilot's EKF can "
+                                        f"converge before AUTO. "
+                                        f"HOLD ignores RC, so the "
+                                        f"rover stays put even if a "
+                                        f"physical RC transmitter is "
+                                        f"active."
+                                        f"[/cyan]"
+                                    )
+                                    settle_done = False
+                                else:
+                                    elapsed = (
+                                        _time.monotonic()
+                                        - manual_settle_start_ts
+                                    )
+                                    if elapsed < manual_settle_time:
+                                        # Re-assert HOLD if something
+                                        # external (QGC, a stale
+                                        # auto-re-engage) flipped the
+                                        # mode away during the settle.
+                                        if (
+                                            last_custom_mode is not None
+                                            and last_custom_mode
+                                            != ROVER_MODE_HOLD
+                                        ):
+                                            set_rover_mode(
+                                                conn, ROVER_MODE_HOLD
+                                            )
+                                        settle_done = False
+                                    else:
+                                        settle_done = True
+
+                                if settle_done:
+                                    # Already in HOLD; the existing
+                                    # HOLD→AUTO transition block below
+                                    # will fire on the next healthy
+                                    # tick once `holding=True`.
+                                    if manual_settle_start_ts is not None:
+                                        console.print(
+                                            f"[cyan]EKF settle "
+                                            f"complete "
+                                            f"({_time.monotonic() - manual_settle_start_ts:.1f}s "
+                                            f"in HOLD). Switching "
+                                            f"to "
+                                            f"{drive_mode_normalised.upper()} "
+                                            f"once EKF reports "
+                                            f"flags=831.[/cyan]"
+                                        )
+                                    else:
+                                        # Settle was skipped
+                                        # (manual_settle_time=0); fall
+                                        # through to the original
+                                        # HOLD-on-arm behavior.
+                                        set_rover_mode(
+                                            conn, ROVER_MODE_HOLD
+                                        )
+                                        console.print(
+                                            "[cyan]Forced mode=HOLD. "
+                                            "Switching to "
+                                            f"{drive_mode_normalised.upper()} "
+                                            "once EKF reports "
+                                            "flags=831.[/cyan]"
+                                        )
+                                    holding = True
 
                             # HOLD stickiness: while we're in the "wait
                             # for EKF health" window, aggressively
