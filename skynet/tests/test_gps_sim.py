@@ -989,7 +989,7 @@ class TestSimParamsFlags:
         which prevents 'EKF3 IMU yaw aligned' from ever appearing in
         the autopilot log even though VISION_POSITION_ESTIMATE
         messages are arriving."""
-        assert SIM_PARAMS["VISO_DELAY_MS"] == 50
+        assert SIM_PARAMS["VISO_DELAY_MS"] == 10
 
     def test_viso_pos_noise_set(self):
         """VISO_POS_M_NSE must be set explicitly. Without it the EKF
@@ -1000,7 +1000,7 @@ class TestSimParamsFlags:
     def test_viso_yaw_noise_set(self):
         """VISO_YAW_M_NSE must be set explicitly so the EKF knows how
         much to trust the vision yaw."""
-        assert SIM_PARAMS["VISO_YAW_M_NSE"] == 0.05
+        assert SIM_PARAMS["VISO_YAW_M_NSE"] == 0.005
 
     def test_no_more_gsf_options(self):
         """EK3_SRC_OPTIONS must NOT be set (was 2 for GSF). With
