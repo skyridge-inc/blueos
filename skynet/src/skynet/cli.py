@@ -1206,6 +1206,12 @@ def nav_sim(
 
                 auto_engaged_at: float | None = None
                 ever_saw_throttle = False
+                # Pivot turns hold throttle at 0 while steering goes to its
+                # extremes (e.g. SERVO1=1100, SERVO3=1900 for a skid-steer
+                # right-pivot). Without tracking servo deflection, the
+                # auto-fail trigger below misreads a healthy pivot as a
+                # freeze. Set when either servo PWM moves >50 µs from 1500.
+                ever_saw_servo_deflection = False
                 auto_arm_sent = False
                 # Latest ATTITUDE.roll/pitch in radians for the pre-arm
                 # orientation check. None until the first ATTITUDE message
@@ -1308,6 +1314,11 @@ def nav_sim(
                                 if t == "SERVO_OUTPUT_RAW" and from_autopilot:
                                     last_servo1 = float(msg.servo1_raw)
                                     last_servo3 = float(msg.servo3_raw)
+                                    if (
+                                        abs(last_servo1 - 1500.0) > 50.0
+                                        or abs(last_servo3 - 1500.0) > 50.0
+                                    ):
+                                        ever_saw_servo_deflection = True
                                 elif t == "HEARTBEAT":
                                     # Only the autopilot's heartbeat counts.
                                     # BlueOS services and QGC also broadcast
@@ -1665,6 +1676,7 @@ def nav_sim(
                                         holding = False
                                         auto_engaged_at = _time.monotonic()
                                         ever_saw_throttle = False
+                                        ever_saw_servo_deflection = False
 
                                         # Post-engagement param probe:
                                         # read speed/accel params to
@@ -2024,23 +2036,30 @@ def nav_sim(
                                 )
 
                             # AUTO-fail forensic trigger: nav engaged, AUTO
-                            # mode, but VFR_HUD.throttle stayed 0 across the
-                            # whole window → guard clause in
-                            # AR_WPNav::update() is firing every tick. Trip
-                            # the watcher so the post-loop block can disarm
-                            # and pull the dataflash log.
+                            # mode, but the rover never produced throttle
+                            # AND never moved a steering servo off neutral.
+                            # The servo-deflection check distinguishes a
+                            # genuine freeze (everything stuck at 1500) from
+                            # a healthy pivot maneuver (throttle held at 0
+                            # while steering goes to its extremes). Without
+                            # the steering check, every HIL pivot tripped
+                            # this trigger because vn=ve=0 injection means
+                            # simulated yaw never updates and the pivot
+                            # never completes — see V13 root-cause docs.
                             if (
                                 nav_engaged
                                 and drive_mode_normalised == "auto"
                                 and auto_engaged_at is not None
                                 and not ever_saw_throttle
+                                and not ever_saw_servo_deflection
                                 and not auto_fail_log_grab_pending
                                 and (_time.monotonic() - auto_engaged_at)
                                 > AUTO_FAIL_LOG_GRAB_S
                             ):
                                 auto_fail_log_grab_pending = True
                                 console.print(
-                                    "[red]AUTO produced zero throttle for "
+                                    "[red]AUTO produced zero throttle and "
+                                    "no servo deflection for "
                                     f"{AUTO_FAIL_LOG_GRAB_S:.0f}s — will "
                                     "disarm and pull dataflash log for "
                                     "AR_WPNav forensic analysis.[/red]"

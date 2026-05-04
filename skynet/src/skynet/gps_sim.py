@@ -1190,7 +1190,24 @@ def send_rc_override(
 
 
 def arm_autopilot(conn: Any) -> None:
-    """Send MAV_CMD_COMPONENT_ARM_DISARM to arm the vehicle."""
+    """Disengage safety, then send MAV_CMD_COMPONENT_ARM_DISARM to arm the vehicle.
+
+    On the bench, BRD_SAFETY_DEFLT defaults the safety switch to engaged on
+    every boot. ArduPilot will accept ARM_DISARM (because BRD_SAFETYOPTION
+    decouples is_armed from safety state) but hal.util->get_soft_armed()
+    stays false — every navigation update early-returns with zero outputs
+    and the rover sits at PWM 1500. This was the V13 "freeze" for ~13 sim
+    runs. force_safety_off via DO_SET_SAFETY_SWITCH_STATE keeps the same
+    code path as a physical safety-button press.
+    """
+    conn.mav.command_long_send(
+        conn.target_system,
+        conn.target_component,
+        mavutil.mavlink.MAV_CMD_DO_SET_SAFETY_SWITCH_STATE,
+        0,
+        float(mavutil.mavlink.SAFETY_SWITCH_STATE_DANGEROUS),  # param1 = 1 → motors enabled
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    )
     conn.mav.command_long_send(
         conn.target_system,
         conn.target_component,
