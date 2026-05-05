@@ -767,7 +767,7 @@ def nav_sim(
                 "wall-clock time."
             ),
         ),
-    ] = 10.0,
+    ] = 5.0,
     manual_settle_time: Annotated[
         float,
         typer.Option(

@@ -239,7 +239,7 @@ class SkidSteerModel:
     start_heading_deg: float = 0.0
     max_speed_mps: float = 2.0 * MPH_TO_MPS
     track_width_m: float = 0.5
-    max_rotation_dps: float = 10.0
+    max_rotation_dps: float = 5.0
 
     lat: float = field(init=False)
     lon: float = field(init=False)
@@ -282,7 +282,7 @@ class SkidSteerModel:
         # 15 Hz tick rotated ~13.7°, well past the EKF's measurement
         # gate, so vision yaw was rejected as outlier and the autopilot
         # kept pivoting through full revolutions in QGC. The cap is
-        # exposed as `max_rotation_dps` (default 10°/s) so callers can
+        # exposed as `max_rotation_dps` (default 5°/s) so callers can
         # trade pivot wall-clock duration against EKF vision-yaw gate
         # headroom without editing the model.
         max_omega_rps = math.radians(self.max_rotation_dps)
