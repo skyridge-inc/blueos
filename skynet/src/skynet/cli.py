@@ -728,7 +728,7 @@ def nav_sim(
         float,
         typer.Option(
             "--ground-speed",
-            help="Max ground speed at full throttle (mph).",
+            help="Max ground speed at full throttle (m/s).",
         ),
     ] = 2.0,
     rate: Annotated[
@@ -787,7 +787,7 @@ def nav_sim(
                 "EKF-quiet window. Set to 0 to skip the settle."
             ),
         ),
-    ] = 3.0,
+    ] = 0.0,
     duration: Annotated[
         Optional[float],
         typer.Option("--duration", help="Wall-clock safety timeout (s)."),
@@ -853,7 +853,6 @@ def nav_sim(
     from .gps_sim import (
         DRIVE_ACKERMANN,
         DRIVE_SKID_STEER,
-        MPH_TO_MPS,
         SIM_PARAMS,
         AckermannModel,
         GpsInputEmitter,
@@ -904,7 +903,7 @@ def nav_sim(
 
     REBOOT_WAIT = 12  # seconds to wait for autopilot reboot (real HW: 6-8s; SITL: 9-10s)
 
-    max_speed_mps = ground_speed * MPH_TO_MPS
+    max_speed_mps = ground_speed
 
     sidecar = sidecar_path(device)
     if sidecar.exists():
@@ -1016,7 +1015,7 @@ def nav_sim(
             table.add_column("Value")
             table.add_row("Device", device)
             table.add_row("Drive type", drive_type)
-            table.add_row("Ground speed", f"{ground_speed} mph ({max_speed_mps:.4f} m/s)")
+            table.add_row("Ground speed", f"{ground_speed:.2f} m/s")
             table.add_row("Rate", f"{rate} Hz")
             if drive_type == DRIVE_SKID_STEER:
                 table.add_row("Track width", f"{track_width} m")
@@ -2247,6 +2246,47 @@ def nav_sim(
                 if auto_fail_log_grab_pending:
                     _grab_dataflash_after_auto_fail(conn, console, err_console)
             finally:
+                # Stop the rover before doing anything else. When the
+                # per-tick loop exits (Ctrl+C, duration timeout,
+                # mission complete), the sim stops sending GPS_INPUT/
+                # VPE — but the autopilot was running AUTO commands
+                # against its last cached EKF state and will keep
+                # motoring along until either the EKF declares
+                # variance failure (~10s) or the reboot lands (~12s).
+                # That gives the rover several meters of drift after
+                # "Sim stopped" prints. Two-step shutdown:
+                #   1. Mode → HOLD: nav controller commands zero
+                #      desired speed/turn rate, decelerates gracefully.
+                #   2. Disarm: forces motors to MOT_THR_MIN immediately
+                #      and prevents any auto-re-engage.
+                # Both wrapped in try/except so a broken MAVLink
+                # connection (e.g., Ctrl+C mid-send) doesn't skip the
+                # subsequent param restore.
+                try:
+                    set_rover_mode(conn, ROVER_MODE_HOLD)
+                except Exception as e:
+                    err_console.print(
+                        f"[yellow]HOLD-on-exit send failed: {e}"
+                        f"[/yellow]"
+                    )
+                try:
+                    from pymavlink import mavutil as _mavutil
+                    conn.mav.command_long_send(
+                        conn.target_system,
+                        conn.target_component,
+                        _mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+                        0,
+                        0,  # 0 = disarm
+                        0, 0, 0, 0, 0, 0,
+                    )
+                    console.print(
+                        "[bold]Stopped rover (HOLD + disarm)[/bold]"
+                    )
+                except Exception as e:
+                    err_console.print(
+                        f"[yellow]Disarm-on-exit send failed: {e}"
+                        f"[/yellow]"
+                    )
                 # Restore original params and reboot to re-enable real GPS.
                 console.print("[bold]Restoring original params...[/bold]")
                 sim_ctx.__exit__(None, None, None)
