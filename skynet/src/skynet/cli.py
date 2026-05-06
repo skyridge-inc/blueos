@@ -1057,7 +1057,23 @@ def nav_sim(
 
             # Write sim params + sidecar (SimParamContext.__enter__).
             # We enter the context here but don't exit until phase 2.
-            sim_ctx = SimParamContext(conn, device)
+            #
+            # Tie WP_PIVOT_RATE to --rotation-speed so the autopilot
+            # commands pivots at the same rate the kinematic can
+            # actually deliver. Default ArduRover WP_PIVOT_RATE=60°/s
+            # combined with our kinematic cap (max_rotation_dps,
+            # default 5°/s) creates a 12× mismatch: the autopilot's
+            # bang-bang pivot controller is sized to converge fast at
+            # 60°/s, but the rover only rotates at 5°/s — resulting
+            # in PID windup and overshoot when the autopilot's view
+            # of heading finally catches up. Matching the two values
+            # gives the autopilot's controller dynamics that fit the
+            # actual response rate.
+            sim_params_dynamic = dict(SIM_PARAMS)
+            sim_params_dynamic["WP_PIVOT_RATE"] = float(rotation_speed)
+            sim_ctx = SimParamContext(
+                conn, device, sim_params=sim_params_dynamic
+            )
             sim_ctx.__enter__()
 
             # GPS_TYPE requires a reboot to take effect on real HW. SITL
