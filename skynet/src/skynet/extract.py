@@ -10,6 +10,7 @@ import yaml
 
 from .blueos_api import BlueOSClient
 from .exceptions import ParamFileError
+from .host_config import DNSMASQ_HOST_PATH, parse_dnsmasq_conf
 
 
 # Candidate paths for MediaMTX config via the BlueOS file browser API.
@@ -101,6 +102,19 @@ def _clean_bag(raw: dict[str, Any] | None) -> dict[str, Any] | None:
     return {k: v for k, v in raw.items() if k not in _BAG_EXCLUDE_KEYS}
 
 
+def fetch_dhcp_reservations(client: BlueOSClient) -> list[dict[str, Any]] | None:
+    """Read static DHCP reservations from the host dnsmasq config.
+
+    Returns [] when the file does not exist, None if the host is unreachable.
+    """
+    result = client.run_host_command(f"cat {DNSMASQ_HOST_PATH}")
+    if not isinstance(result, dict):
+        return None
+    if result.get("return_code") != 0:
+        return []
+    return parse_dnsmasq_conf(result.get("stdout") or "")
+
+
 def extract_config(client: BlueOSClient) -> dict[str, Any]:
     """Fetch provisionable configuration from a BlueOS device.
 
@@ -125,6 +139,7 @@ def extract_config(client: BlueOSClient) -> dict[str, Any]:
         "ethernet": _clean_ethernet(client.get_ethernet()),
         "wifi_saved": client.get_wifi_saved(),
         "hotspot": client.get_hotspot(),
+        "dhcp_reservations": fetch_dhcp_reservations(client),
     }
 
     return config

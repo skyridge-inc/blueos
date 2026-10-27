@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 from typing import Any
 
 import httpx
@@ -9,6 +10,19 @@ import httpx
 from .exceptions import BlueOSConnectionError
 
 DEFAULT_TIMEOUT = httpx.Timeout(10.0, read=30.0)
+
+
+def _unrepr(value: Any) -> str:
+    """Decode a Python repr() of str/bytes back to text."""
+    if not isinstance(value, str):
+        return ""
+    try:
+        decoded = ast.literal_eval(value)
+    except (ValueError, SyntaxError):
+        return value
+    if isinstance(decoded, bytes):
+        return decoded.decode("utf-8", errors="replace")
+    return str(decoded)
 
 
 class BlueOSClient:
@@ -138,6 +152,77 @@ class BlueOSClient:
         return self._post(
             "/cable-guy/v1.0/address",
             params={"interface_name": interface_name, "ip_address": ip_address},
+        )
+
+    def add_dhcp_server(self, interface_name: str, ipv4_gateway: str) -> bool:
+        """Run a BlueOS DHCP server (dnsmasq) on an interface.
+
+        BlueOS persists this in its settings and assigns the gateway IP
+        to the interface; leases are .101-.200 of the gateway's /24.
+        """
+        return self._post(
+            "/cable-guy/v1.0/dhcp",
+            params={
+                "interface_name": interface_name,
+                "ipv4_gateway": ipv4_gateway,
+                "is_backup_server": False,
+            },
+        )
+
+    # -- Extensions (Kraken v2) --
+
+    def install_extension(self, extension: dict[str, Any], timeout: float = 600.0) -> bool:
+        """Install an extension. Blocks while Kraken streams the image pull."""
+        body = {
+            k: extension.get(k)
+            for k in ("identifier", "tag", "name", "docker", "enabled",
+                      "permissions", "user_permissions", "auth")
+        }
+        body["user_permissions"] = body["user_permissions"] or ""
+        return self._post(
+            "/kraken/v2.0/extension/",
+            json=body,
+            timeout=httpx.Timeout(timeout),
+        )
+
+    # -- Host access (Commander) --
+
+    def run_host_command(self, command: str) -> dict[str, Any] | None:
+        """Run a shell command on the host (as pi, with sudo available).
+
+        Returns {"stdout", "stderr", "return_code"} with the output decoded,
+        or None if the request failed.
+        """
+        try:
+            resp = self._client.post(
+                "/commander/v1.0/command/host",
+                params={"command": command, "i_know_what_i_am_doing": True},
+            )
+            resp.raise_for_status()
+            self._connected = True
+            data = resp.json()
+        except httpx.ConnectError as e:
+            if not self._connected:
+                raise BlueOSConnectionError(
+                    f"Cannot reach {self._base_url}: {e}"
+                ) from e
+            return None
+        except (httpx.HTTPStatusError, httpx.HTTPError, ValueError):
+            return None
+        if not isinstance(data, dict):
+            return None
+        # Commander returns stdout/stderr as Python repr() strings.
+        return {
+            "stdout": _unrepr(data.get("stdout")),
+            "stderr": _unrepr(data.get("stderr")),
+            "return_code": data.get("return_code"),
+        }
+
+    def reboot(self) -> bool:
+        """Reboot the host (Commander delays ~5 s before rebooting)."""
+        return self._post(
+            "/commander/v1.0/shutdown",
+            params={"shutdown_type": "reboot", "i_know_what_i_am_doing": True},
         )
 
     # -- Setters --

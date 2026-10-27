@@ -61,6 +61,42 @@ with `skynet misc write <sidecar> --yes --include-calibration`.
 | `sync FILE` | Smart sync — write only changed/added params |
 | `backup` | Full backup to timestamped file |
 
+### BlueOS host provisioning (`skynet config`)
+
+| Command | Description |
+|---------|-------------|
+| `config download HOST` | Snapshot a BlueOS host to YAML (identity, extensions, bag, network, DHCP reservations, MediaMTX config, autopilot params) |
+| `config upload HOST FILE` | Provision a BlueOS host from that YAML |
+
+`config upload` applies, in order:
+
+1. Hostname, vehicle name, bag entries
+2. **Extensions** — installs any `extensions:` entry whose identifier/tag is not already installed
+3. MediaMTX config file
+4. `network.ethernet` addresses — `mode: unmanaged` → static IP; `mode: server` → BlueOS DHCP server on that interface (leases `.101`–`.200`)
+5. **`network.dhcp_reservations`** — writes `/etc/blueos/dnsmasq.conf` on the host and bind-mounts it over `/etc/dnsmasq.conf` in `blueos-core` (via `/root/.config/blueos/bootstrap/startup.json`, backed up first)
+6. Autopilot parameters over MAVLink (`tcp:HOST:5760`)
+7. **Reboot** — if step 5 changed anything, the host reboots so `blueos-core` is recreated with the bind mount
+
+```yaml
+network:
+  ethernet:
+  - name: eth1                      # camera NIC
+    addresses:
+    - {ip: 192.168.10.1, mode: server}
+  dhcp_reservations:
+  - {mac: 64:35:1c:00:f0:79, ip: 192.168.10.2, hostname: routecam}
+mediamtx:
+  config:
+    paths:
+      front:
+        source: rtsp://192.168.10.2:5005/routecam
+```
+
+Reserved IPs should sit outside the `.101`–`.200` lease pool. Use `--dry-run` to preview.
+Host-specific entries (e.g. the `wt0` NetBird address, per-host static IPs) should be removed
+from a YAML before using it as a template for a different rover.
+
 ## Common Options
 
 - `--device`, `-d` — Connection string (default: `/dev/ttyACM0`, env: `MOWER_DEVICE`)

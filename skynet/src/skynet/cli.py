@@ -457,6 +457,47 @@ def extract_config_cmd(
 MAVLINK_PORT = 5760
 
 
+def _ethernet_addresses(network: dict[str, Any], mode: str) -> list[tuple[str, str]]:
+    """(interface, ip) pairs from network.ethernet whose address mode matches."""
+    return [
+        (iface.get("name", ""), addr.get("ip", ""))
+        for iface in (network.get("ethernet") or [])
+        if isinstance(iface, dict)
+        for addr in (iface.get("addresses") or [])
+        if isinstance(addr, dict) and addr.get("mode") == mode
+    ]
+
+
+def _apply_dhcp_reservations(client: Any, reservations: list[dict[str, Any]]) -> bool | None:
+    """Write the host dnsmasq reservations file and ensure blueos-core mounts it.
+
+    Returns True if anything changed (reboot needed), False if already in
+    place, or None on failure.
+    """
+    from .host_config import (
+        DNSMASQ_HOST_PATH,
+        ensure_bind_command,
+        render_dnsmasq_conf,
+        write_file_command,
+    )
+
+    content = render_dnsmasq_conf(reservations)
+    current = client.run_host_command(f"cat {DNSMASQ_HOST_PATH}")
+    if not isinstance(current, dict):
+        return None
+    changed = False
+    if current.get("return_code") != 0 or current.get("stdout") != content:
+        result = client.run_host_command(write_file_command(DNSMASQ_HOST_PATH, content))
+        if not isinstance(result, dict) or result.get("return_code") != 0:
+            return None
+        changed = True
+
+    result = client.run_host_command(ensure_bind_command())
+    if not isinstance(result, dict) or result.get("return_code") != 0:
+        return None
+    return changed or "changed" in (result.get("stdout") or "").split()
+
+
 @config_app.command()
 def download(
     host: Annotated[
@@ -574,6 +615,7 @@ def upload(
     from .blueos_api import BlueOSClient
     from .exceptions import BlueOSConnectionError, MowerProvisionerError
     from .extract import load_yaml, push_mediamtx_config
+    from .host_config import DNSMASQ_HOST_PATH
 
     config = load_yaml(config_file)
 
@@ -586,18 +628,36 @@ def upload(
     bag = config.get("bag")
     if bag and isinstance(bag, dict):
         changes.append(f"  Bag entries: {len(bag)}")
+    extensions = [
+        e for e in (config.get("extensions") or [])
+        if isinstance(e, dict) and e.get("identifier") and e.get("tag")
+    ]
+    if extensions:
+        changes.append(
+            f"  Extensions: {', '.join(e['identifier'] + ':' + str(e['tag']) for e in extensions)}"
+            " (missing ones installed)"
+        )
     mediamtx = config.get("mediamtx")
     if mediamtx and isinstance(mediamtx, dict) and mediamtx.get("config"):
         changes.append(f"  MediaMTX config: {mediamtx.get('config_path', 'unknown path')}")
     network = config.get("network")
-    if network and isinstance(network, dict) and network.get("ethernet"):
-        unmanaged_count = sum(
-            1 for iface in network["ethernet"]
-            for addr in (iface.get("addresses") or [])
-            if addr.get("mode") == "unmanaged"
+    if not isinstance(network, dict):
+        network = {}
+    static_ips = _ethernet_addresses(network, "unmanaged")
+    if static_ips:
+        changes.append(f"  Static IPs (unmanaged): {len(static_ips)}")
+    dhcp_servers = _ethernet_addresses(network, "server")
+    if dhcp_servers:
+        changes.append(
+            "  DHCP servers: "
+            + ", ".join(f"{iface} ({ip})" for iface, ip in dhcp_servers)
         )
-        if unmanaged_count:
-            changes.append(f"  Static IPs (unmanaged): {unmanaged_count}")
+    reservations = network.get("dhcp_reservations")
+    if isinstance(reservations, list):
+        changes.append(
+            f"  DHCP reservations: {len(reservations)} "
+            f"(writes {DNSMASQ_HOST_PATH}; host reboots if changed)"
+        )
     params = config.get("autopilot_params")
     if params and isinstance(params, dict):
         if not include_calibration:
@@ -614,6 +674,10 @@ def upload(
 
     if dry_run:
         console.print("[yellow]DRY RUN — no changes will be made.[/yellow]")
+        if isinstance(reservations, list) and reservations:
+            console.print("\n[bold]DHCP reservations:[/bold]")
+            for r in reservations:
+                console.print(f"  {r.get('mac')} -> {r.get('ip')} {r.get('hostname') or ''}")
         if params:
             console.print("\n[bold]Parameters:[/bold]")
             for name in sorted(params):
@@ -625,6 +689,7 @@ def upload(
 
     url = f"http://{host}" if not host.startswith("http") else host
     uploaded: list[str] = []
+    reboot_needed: bool | None = False
 
     # 1. Push BlueOS config over HTTP
     with BlueOSClient(url, timeout=_httpx.Timeout(timeout, read=timeout * 3)) as client:
@@ -652,40 +717,73 @@ def upload(
                     if bag_ok:
                         uploaded.append(f"bag ({bag_ok} entries)")
 
+            # Extensions go first so MediaMTX's config dir exists before the push
+            if extensions:
+                installed = {
+                    (e.get("identifier"), str(e.get("tag")))
+                    for e in (client.get_extensions() or [])
+                    if isinstance(e, dict)
+                }
+                ext_ok = 0
+                for ext in extensions:
+                    key = (ext["identifier"], str(ext["tag"]))
+                    if key in installed:
+                        ext_ok += 1
+                        continue
+                    with console.status(f"Installing extension {key[0]}:{key[1]}..."):
+                        if client.install_extension(ext):
+                            ext_ok += 1
+                        else:
+                            err_console.print(
+                                f"[yellow]Warning: Failed to install extension {key[0]}:{key[1]}[/yellow]"
+                            )
+                if ext_ok:
+                    uploaded.append(f"extensions ({ext_ok})")
+
+            with console.status("Uploading MediaMTX and network configuration..."):
                 if mediamtx and isinstance(mediamtx, dict) and mediamtx.get("config"):
                     if push_mediamtx_config(client, mediamtx):
                         uploaded.append("mediamtx config")
                     else:
                         err_console.print("[yellow]Warning: Failed to push MediaMTX config[/yellow]")
 
-                # Add unmanaged (static) IPs that are missing from the device
-                if network and isinstance(network, dict) and network.get("ethernet"):
-                    current = client.get_ethernet() or []
-                    current_ips: dict[str, set[str]] = {}
-                    for iface in current:
-                        name = iface.get("name", "")
-                        current_ips[name] = {
-                            a.get("ip") for a in (iface.get("addresses") or [])
-                        }
+                current_modes: dict[tuple[str, str], str] = {}
+                if static_ips or dhcp_servers:
+                    for iface in client.get_ethernet() or []:
+                        for a in (iface.get("addresses") or []):
+                            current_modes[(iface.get("name", ""), a.get("ip", ""))] = a.get("mode", "")
 
-                    ip_ok = 0
-                    for iface in network["ethernet"]:
-                        iface_name = iface.get("name", "")
-                        for addr in (iface.get("addresses") or []):
-                            if addr.get("mode") != "unmanaged":
-                                continue
-                            ip = addr.get("ip", "")
-                            if ip in current_ips.get(iface_name, set()):
-                                ip_ok += 1
-                                continue
-                            if client.add_ip(iface_name, ip):
-                                ip_ok += 1
-                            else:
-                                err_console.print(
-                                    f"[yellow]Warning: Failed to add {ip} to {iface_name}[/yellow]"
-                                )
-                    if ip_ok:
-                        uploaded.append(f"static IPs ({ip_ok})")
+                # Add unmanaged (static) IPs that are missing from the device
+                ip_ok = 0
+                for iface_name, ip in static_ips:
+                    if (iface_name, ip) in current_modes or client.add_ip(iface_name, ip):
+                        ip_ok += 1
+                    else:
+                        err_console.print(
+                            f"[yellow]Warning: Failed to add {ip} to {iface_name}[/yellow]"
+                        )
+                if ip_ok:
+                    uploaded.append(f"static IPs ({ip_ok})")
+
+                # Start DHCP servers (cable-guy assigns the gateway IP itself)
+                dhcp_ok = 0
+                for iface_name, ip in dhcp_servers:
+                    if current_modes.get((iface_name, ip)) == "server" or client.add_dhcp_server(iface_name, ip):
+                        dhcp_ok += 1
+                    else:
+                        err_console.print(
+                            f"[yellow]Warning: Failed to start DHCP server on {iface_name} ({ip})[/yellow]"
+                        )
+                if dhcp_ok:
+                    uploaded.append(f"DHCP servers ({dhcp_ok})")
+
+            if isinstance(reservations, list):
+                with console.status("Writing DHCP reservations..."):
+                    reboot_needed = _apply_dhcp_reservations(client, reservations)
+                if reboot_needed is None:
+                    err_console.print("[yellow]Warning: Failed to apply DHCP reservations[/yellow]")
+                else:
+                    uploaded.append(f"DHCP reservations ({len(reservations)})")
         except BlueOSConnectionError as e:
             err_console.print(f"[red]{e}[/red]")
             raise typer.Exit(1)
@@ -718,6 +816,20 @@ def upload(
             err_console.print(f"[yellow]Warning: Could not write autopilot params: {e}[/yellow]")
 
     console.print(f"[green]Upload complete: {', '.join(uploaded)}[/green]")
+
+    # 3. Reboot so bootstrap recreates blueos-core with the dnsmasq.conf bind
+    if reboot_needed:
+        with BlueOSClient(url, timeout=_httpx.Timeout(timeout)) as client:
+            if client.reboot():
+                console.print(
+                    "[bold yellow]Host config changed — rebooting "
+                    f"{host}. DHCP reservations active after boot (~1-2 min).[/bold yellow]"
+                )
+            else:
+                err_console.print(
+                    f"[red]Reboot request failed — reboot {host} manually to "
+                    "activate DHCP reservations.[/red]"
+                )
 
 
 @nav_app.command("sim")

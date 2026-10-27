@@ -301,3 +301,19 @@ class TestPushMediamtxConfig:
         client = MagicMock()
         assert push_mediamtx_config(client, {"config_path": "/foo"}) is False
         client.put_file.assert_not_called()
+
+
+class TestFetchDhcpReservations:
+    def test_missing_file_is_empty(self):
+        from skynet.extract import fetch_dhcp_reservations
+
+        client = MagicMock()
+        client.run_host_command.return_value = {"stdout": "", "stderr": "nope", "return_code": 1}
+        assert fetch_dhcp_reservations(client) == []
+
+    def test_unreachable_is_none(self):
+        from skynet.extract import fetch_dhcp_reservations
+
+        client = MagicMock()
+        client.run_host_command.return_value = None
+        assert fetch_dhcp_reservations(client) is None

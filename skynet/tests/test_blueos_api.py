@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 import respx
@@ -237,3 +239,69 @@ class TestContextManager:
     def test_context_manager(self):
         with BlueOSClient(BASE_URL) as client:
             assert client is not None
+
+
+class TestProvisioningEndpoints:
+    @respx.mock
+    def test_add_dhcp_server(self, client):
+        route = respx.post(f"{BASE_URL}/cable-guy/v1.0/dhcp").mock(
+            return_value=httpx.Response(200, json=None)
+        )
+        assert client.add_dhcp_server("eth1", "192.168.10.1") is True
+        params = route.calls.last.request.url.params
+        assert params["interface_name"] == "eth1"
+        assert params["ipv4_gateway"] == "192.168.10.1"
+        assert params["is_backup_server"] == "false"
+
+    @respx.mock
+    def test_install_extension_body(self, client):
+        route = respx.post(f"{BASE_URL}/kraken/v2.0/extension/").mock(
+            return_value=httpx.Response(200, text="pulling...")
+        )
+        ext = {
+            "identifier": "williangalvani.mediamtx", "tag": "v1.11.4", "name": "MediaMTX",
+            "docker": "williangalvani/blueos-extension-mediamtx", "enabled": True,
+            "permissions": "{}", "user_permissions": None, "auth": None, "extra": "x",
+        }
+        assert client.install_extension(ext) is True
+        body = json.loads(route.calls.last.request.content)
+        assert body["identifier"] == "williangalvani.mediamtx"
+        assert body["user_permissions"] == ""
+        assert "extra" not in body
+
+    @respx.mock
+    def test_run_host_command_decodes_repr(self, client):
+        route = respx.post(f"{BASE_URL}/commander/v1.0/command/host").mock(
+            return_value=httpx.Response(200, json={
+                "stdout": repr("line1\nit's\n"), "stderr": "''", "return_code": 0,
+            })
+        )
+        result = client.run_host_command("cat /etc/blueos/dnsmasq.conf")
+        assert result == {"stdout": "line1\nit's\n", "stderr": "", "return_code": 0}
+        params = route.calls.last.request.url.params
+        assert params["command"] == "cat /etc/blueos/dnsmasq.conf"
+        assert params["i_know_what_i_am_doing"] == "true"
+
+    @respx.mock
+    def test_run_host_command_decodes_bytes_repr(self, client):
+        respx.post(f"{BASE_URL}/commander/v1.0/command/host").mock(
+            return_value=httpx.Response(200, json={
+                "stdout": repr(b"ok\n"), "stderr": repr(b""), "return_code": 0,
+            })
+        )
+        assert client.run_host_command("true")["stdout"] == "ok\n"
+
+    @respx.mock
+    def test_run_host_command_http_error(self, client):
+        respx.post(f"{BASE_URL}/commander/v1.0/command/host").mock(
+            return_value=httpx.Response(500)
+        )
+        assert client.run_host_command("true") is None
+
+    @respx.mock
+    def test_reboot(self, client):
+        route = respx.post(f"{BASE_URL}/commander/v1.0/shutdown").mock(
+            return_value=httpx.Response(200, json=None)
+        )
+        assert client.reboot() is True
+        assert route.calls.last.request.url.params["shutdown_type"] == "reboot"

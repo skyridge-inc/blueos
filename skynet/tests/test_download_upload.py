@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 
 from skynet.cli import app
 from skynet.config import CALIBRATION_PARAMS
+from skynet.exceptions import MowerProvisionerError
 
 runner = CliRunner()
 
@@ -365,3 +366,148 @@ class TestUpload:
         result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
         assert result.exit_code == 0, result.output
         assert "Failed to push MediaMTX config" in result.output
+
+
+class TestUploadProvisioning:
+    """Extensions, DHCP servers, DHCP reservations and reboot."""
+
+    CAMERA = {"mac": "64:35:1c:00:f0:79", "ip": "192.168.10.2", "hostname": "routecam"}
+
+    def _client(self, dnsmasq_stdout: str | None = None, bind_stdout: str = "unchanged"):
+        client = _mock_blueos_client()
+        client.install_extension.return_value = True
+        client.add_ip.return_value = True
+        client.add_dhcp_server.return_value = True
+        client.reboot.return_value = True
+
+        def run_host_command(cmd: str):
+            if cmd.startswith("cat "):
+                if dnsmasq_stdout is None:
+                    return {"stdout": "", "stderr": "No such file", "return_code": 1}
+                return {"stdout": dnsmasq_stdout, "stderr": "", "return_code": 0}
+            if cmd.startswith("sudo python3"):
+                return {"stdout": bind_stdout + "\n", "stderr": "", "return_code": 0}
+            return {"stdout": "", "stderr": "", "return_code": 0}
+
+        client.run_host_command.side_effect = run_host_command
+        return client
+
+    def _upload(self, mock_cls, client, tmp_path, config, *extra):
+        mock_cls.return_value = client
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(yaml.dump(config))
+        return runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y", *extra])
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_installs_only_missing_extensions(self, mock_cls, tmp_path):
+        client = self._client()
+        client.get_extensions.return_value = [
+            {"identifier": "bluerobotics.cockpit", "tag": "v1.16.0"},
+            {"identifier": "williangalvani.mediamtx", "tag": "v1.10.0"},  # wrong tag
+        ]
+        config = {"extensions": [
+            {"identifier": "bluerobotics.cockpit", "tag": "v1.16.0"},
+            {"identifier": "williangalvani.mediamtx", "tag": "v1.11.4"},
+        ]}
+        result = self._upload(mock_cls, client, tmp_path, config)
+        assert result.exit_code == 0, result.output
+        client.install_extension.assert_called_once()
+        assert client.install_extension.call_args[0][0]["tag"] == "v1.11.4"
+        assert "extensions (2)" in result.output
+        client.reboot.assert_not_called()
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_starts_dhcp_server_only_when_not_serving(self, mock_cls, tmp_path):
+        client = self._client()
+        client.get_ethernet.return_value = [
+            {"name": "usb0", "addresses": [{"ip": "192.168.3.1", "mode": "server"}]},
+            {"name": "eth1", "addresses": []},
+        ]
+        config = {"network": {"ethernet": [
+            {"name": "usb0", "addresses": [{"ip": "192.168.3.1", "mode": "server"}]},
+            {"name": "eth1", "addresses": [{"ip": "192.168.10.1", "mode": "server"}]},
+            {"name": "eth0", "addresses": [{"ip": "192.168.1.117", "mode": "client"}]},
+        ]}}
+        result = self._upload(mock_cls, client, tmp_path, config)
+        assert result.exit_code == 0, result.output
+        client.add_dhcp_server.assert_called_once_with("eth1", "192.168.10.1")
+        client.add_ip.assert_not_called()
+        assert "DHCP servers (2)" in result.output
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_writes_reservations_and_reboots(self, mock_cls, tmp_path):
+        client = self._client(dnsmasq_stdout=None, bind_stdout="changed")
+        config = {"network": {"dhcp_reservations": [self.CAMERA]}}
+        result = self._upload(mock_cls, client, tmp_path, config)
+        assert result.exit_code == 0, result.output
+
+        cmds = [c.args[0] for c in client.run_host_command.call_args_list]
+        assert any("base64 -d | sudo tee /etc/blueos/dnsmasq.conf" in c for c in cmds)
+        assert any(c.startswith("sudo python3 -c") for c in cmds)
+        client.reboot.assert_called_once()
+        assert "rebooting" in result.output
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_no_reboot_when_reservations_unchanged(self, mock_cls, tmp_path):
+        from skynet.host_config import render_dnsmasq_conf
+
+        client = self._client(
+            dnsmasq_stdout=render_dnsmasq_conf([self.CAMERA]), bind_stdout="unchanged",
+        )
+        config = {"network": {"dhcp_reservations": [self.CAMERA]}}
+        result = self._upload(mock_cls, client, tmp_path, config)
+        assert result.exit_code == 0, result.output
+        cmds = [c.args[0] for c in client.run_host_command.call_args_list]
+        assert not any("sudo tee" in c for c in cmds)
+        client.reboot.assert_not_called()
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_reservation_failure_warns_without_reboot(self, mock_cls, tmp_path):
+        client = self._client()
+        client.run_host_command.side_effect = None
+        client.run_host_command.return_value = None
+        config = {"network": {"dhcp_reservations": [self.CAMERA]}}
+        result = self._upload(mock_cls, client, tmp_path, config)
+        assert result.exit_code == 0, result.output
+        assert "Failed to apply DHCP reservations" in result.output
+        client.reboot.assert_not_called()
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_dry_run_makes_no_calls(self, mock_cls, tmp_path):
+        client = self._client()
+        config = {
+            "extensions": [{"identifier": "williangalvani.mediamtx", "tag": "v1.11.4"}],
+            "network": {
+                "ethernet": [{"name": "eth1", "addresses": [{"ip": "192.168.10.1", "mode": "server"}]}],
+                "dhcp_reservations": [self.CAMERA],
+            },
+        }
+        result = self._upload(mock_cls, client, tmp_path, config, "--dry-run")
+        assert result.exit_code == 0, result.output
+        assert "DHCP servers: eth1 (192.168.10.1)" in result.output
+        assert "64:35:1c:00:f0:79 -> 192.168.10.2" in result.output
+        client.install_extension.assert_not_called()
+        client.add_dhcp_server.assert_not_called()
+        client.run_host_command.assert_not_called()
+        client.reboot.assert_not_called()
+
+
+class TestDownloadReservations:
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_download_includes_dhcp_reservations(self, mock_cls, mock_mavlink, tmp_path):
+        client = _mock_blueos_client()
+        client.run_host_command.return_value = {
+            "stdout": "# x\ndhcp-host=64:35:1c:00:f0:79,192.168.10.2,routecam\n",
+            "stderr": "", "return_code": 0,
+        }
+        mock_cls.return_value = client
+        mock_mavlink.side_effect = MowerProvisionerError("no mav")
+
+        out = tmp_path / "out.yaml"
+        result = runner.invoke(app, ["config", "download", "192.168.2.2", "-o", str(out)])
+        assert result.exit_code == 0, result.output
+        data = yaml.safe_load(out.read_text())
+        assert data["network"]["dhcp_reservations"] == [
+            {"mac": "64:35:1c:00:f0:79", "ip": "192.168.10.2", "hostname": "routecam"}
+        ]

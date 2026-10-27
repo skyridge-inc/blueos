@@ -2,11 +2,12 @@ hostname: sky1
 vehicle_name: sky1
 extensions:
 - identifier: bluerobotics.cockpit
-  tag: v1.16.0
-  name: Cockpit
+  tag: v1.17.0
+  name: Cockpit Lite
   docker: bluerobotics/cockpit
   enabled: true
-  permissions: '{"ExposedPorts":{"8000/tcp":{}},"HostConfig":{"PortBindings":{"8000/tcp":[{"HostPort":""}]}}}'
+  permissions: '{"ExposedPorts": {"8000/tcp": {}}, "HostConfig": {"PortBindings":
+    {"8000/tcp": [{"HostPort": ""}]}}}'
   user_permissions: ''
   auth: null
 - identifier: williangalvani.mediamtx
@@ -31,15 +32,17 @@ bag:
     url: null
   major_tom:
     token: f720c0e370f48e73b93eb4f62b20ac379fc12373
-    inventory_url: https://app.blueos.cloud/api/agent/blueos/a5804fe4-aef4-4357-9461-37ffa2d1367a/
+    inventory_url: https://blueos.cloud/
 network:
   ethernet:
   - name: eth0
     addresses:
-    - ip: 192.168.1.117
-      mode: client
     - ip: 192.168.1.2
       mode: unmanaged
+  - name: eth1
+    addresses:
+    - ip: 192.168.10.1
+      mode: server
   - name: usb0
     addresses:
     - ip: 192.168.3.1
@@ -48,8 +51,18 @@ network:
     addresses:
     - ip: 100.82.255.246
       mode: unmanaged
-  wifi_saved: []
+  wifi_saved:
+  - networkid: 0
+    ssid: '007'
+    bssid: null
+    flags: null
+    nm_id: /org/freedesktop/NetworkManager/Settings/1
+    nm_uuid: d3dbef53-a8a1-473f-bd78-a4d7403e9bbe
   hotspot: true
+  dhcp_reservations:
+  - mac: 64:35:1c:00:f0:79
+    ip: 192.168.10.2
+    hostname: routecam
 mediamtx:
   config_path: extensions/mediamtx/mediamtx.yml
   config:
@@ -57,7 +70,7 @@ mediamtx:
     rtspAddress: :8555
     paths:
       front:
-        source: rtsp://192.168.1.10:5005/routecam
+        source: rtsp://192.168.10.2:5005/routecam
         sourceProtocol: udp
         sourceOnDemand: false
 autopilot_params:
