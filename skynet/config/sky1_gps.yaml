@@ -1,0 +1,13 @@
+receiver:
+  vendor: Septentrio
+  product: mosaic-H
+  serial: '3806485'
+  firmware: 4.14.4
+config:
+- setDataInOut, COM1, , none
+- setSBFOutput, Stream3, COM3
+- setSBFOutput, Stream3, , AuxAntPositions+BaseVectorGeod+PVTGeodetic+VelCovGeodetic+DOP+ReceiverStatus+AttCovEuler
+- setSBFOutput, Stream3, , , msec100
+- setCOMSettings, COM1, baud230400
+- setCOMSettings, COM3, baud230400
+- setGNSSAttitude, , Float+Fixed

@@ -61,14 +61,14 @@ with `skynet misc write <sidecar> --yes --include-calibration`.
 | `sync FILE` | Smart sync — write only changed/added params |
 | `backup` | Full backup to timestamped file |
 
-### BlueOS host provisioning (`skynet config`)
+### BlueOS host provisioning (`skynet config_blueos`)
 
 | Command | Description |
 |---------|-------------|
-| `config download HOST` | Snapshot a BlueOS host to YAML (identity, extensions, bag, network, DHCP reservations, MediaMTX config, autopilot params) |
-| `config upload HOST FILE` | Provision a BlueOS host from that YAML |
+| `config_blueos download HOST` | Snapshot a BlueOS host to YAML (identity, extensions, bag, network, DHCP reservations, MediaMTX config, autopilot params) |
+| `config_blueos upload HOST FILE` | Provision a BlueOS host from that YAML |
 
-`config upload` applies, in order:
+`config_blueos upload` applies, in order:
 
 1. Hostname, vehicle name, bag entries
 2. **Extensions** — installs any `extensions:` entry whose identifier/tag is not already installed
@@ -76,7 +76,11 @@ with `skynet misc write <sidecar> --yes --include-calibration`.
 4. `network.ethernet` addresses — `mode: unmanaged` → static IP; `mode: server` → BlueOS DHCP server on that interface (leases `.101`–`.200`)
 5. **`network.dhcp_reservations`** — writes `/etc/blueos/dnsmasq.conf` on the host and bind-mounts it over `/etc/dnsmasq.conf` in `blueos-core` (via `/root/.config/blueos/bootstrap/startup.json`, backed up first)
 6. Autopilot parameters over MAVLink (`tcp:HOST:5760`)
-7. **Reboot** — if step 5 changed anything, the host reboots so `blueos-core` is recreated with the bind mount
+7. **WiFi** — for each `network.wifi_saved` SSID not already saved on the device, prompts for the
+   password (hidden, entered twice; blank skips) at the start of the run, then connects at the end.
+   Passwords are never written to the YAML. Joining a new network switches `wlan0` immediately, so a
+   device reached over a different WiFi may drop off until it reappears on the new network.
+8. **Reboot** — if step 5 changed anything, the host reboots so `blueos-core` is recreated with the bind mount
 
 ```yaml
 network:
@@ -96,6 +100,37 @@ mediamtx:
 Reserved IPs should sit outside the `.101`–`.200` lease pool. Use `--dry-run` to preview.
 Host-specific entries (e.g. the `wt0` NetBird address, per-host static IPs) should be removed
 from a YAML before using it as a template for a different rover.
+
+### GNSS RTK/heading receiver (`skynet config_gps`)
+
+Plug the receiver's USB port into the machine running skynet. Both commands scan USB serial
+ports for a supported receiver (currently Septentrio, USB vendor `0x152A`, e.g. the mosaic-H on
+an ArduSimple simpleRTK3B Heading); pass `--port` if several are attached.
+
+| Command | Description |
+|---------|-------------|
+| `config_gps download [-o FILE]` | Save the receiver's identity and Boot config to YAML (default `gps-<serial>.yaml`) |
+| `config_gps upload FILE` | Reset the running config to factory defaults, replay the YAML commands, save to Boot, read back to verify |
+
+The `config:` list is the receiver's own `lstConfigFile, Boot` output (settings that differ from
+factory defaults), so it replays verbatim on a replacement receiver.
+
+```yaml
+receiver: {vendor: Septentrio, product: mosaic-H, serial: '3806485', firmware: 4.14.4}
+config:
+- setDataInOut, COM1, , none
+- setSBFOutput, Stream3, COM3
+- setSBFOutput, Stream3, , AuxAntPositions+BaseVectorGeod+PVTGeodetic+VelCovGeodetic+DOP+ReceiverStatus+AttCovEuler
+- setSBFOutput, Stream3, , , msec100
+- setCOMSettings, COM1, baud230400
+- setCOMSettings, COM3, baud230400
+- setGNSSAttitude, , Float+Fixed
+```
+
+**sky1 (`config/sky1_gps.yaml`)**: the Cube's TELEM1 TX goes to mosaic COM1 RX but its RX comes
+from mosaic COM3 TX, so ArduPilot can't auto-configure the receiver (`GPS_AUTO_CONFIG=0`,
+`GPS1_TYPE=26` in `config/sky1.yaml`). The receiver streams SBF on COM3 and takes RTCM
+corrections on COM1, both at 230400 — the baud the Cube detects and transmits at.
 
 ## Common Options
 

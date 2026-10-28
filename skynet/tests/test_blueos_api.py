@@ -305,3 +305,15 @@ class TestProvisioningEndpoints:
         )
         assert client.reboot() is True
         assert route.calls.last.request.url.params["shutdown_type"] == "reboot"
+
+
+class TestConnectWifi:
+    @respx.mock
+    def test_connect_wifi_body(self, client):
+        route = respx.post(f"{BASE_URL}/wifi-manager/v1.0/connect").mock(
+            return_value=httpx.Response(200, json=None)
+        )
+        assert client.connect_wifi("007", "pw") is True
+        req = route.calls.last.request
+        assert json.loads(req.content) == {"ssid": "007", "password": "pw"}
+        assert req.url.params["hidden"] == "false"

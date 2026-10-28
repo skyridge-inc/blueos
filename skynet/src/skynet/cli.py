@@ -28,6 +28,10 @@ config_app = typer.Typer(
     help="BlueOS device configuration download and upload.",
     no_args_is_help=True,
 )
+gps_config_app = typer.Typer(
+    help="GNSS RTK/heading receiver configuration over USB.",
+    no_args_is_help=True,
+)
 misc_app = typer.Typer(
     help="Low-level MAVLink parameter utilities and config extraction.",
     no_args_is_help=True,
@@ -36,7 +40,8 @@ nav_app = typer.Typer(
     help="Navigation and mission planning.",
     no_args_is_help=True,
 )
-app.add_typer(config_app, name="config")
+app.add_typer(config_app, name="config_blueos")
+app.add_typer(gps_config_app, name="config_gps")
 app.add_typer(misc_app, name="misc")
 app.add_typer(nav_app, name="nav")
 
@@ -468,6 +473,22 @@ def _ethernet_addresses(network: dict[str, Any], mode: str) -> list[tuple[str, s
     ]
 
 
+def _prompt_wifi_password(ssid: str) -> str:
+    """Hidden password prompt; blank skips, non-blank must be entered twice."""
+    while True:
+        password = typer.prompt(
+            f"WiFi password for '{ssid}' (blank to skip)",
+            default="",
+            show_default=False,
+            hide_input=True,
+        )
+        if not password:
+            return ""
+        if typer.prompt("Repeat for confirmation", hide_input=True) == password:
+            return password
+        err_console.print("[red]Passwords did not match — try again.[/red]")
+
+
 def _apply_dhcp_reservations(client: Any, reservations: list[dict[str, Any]]) -> bool | None:
     """Write the host dnsmasq reservations file and ensure blueos-core mounts it.
 
@@ -652,6 +673,15 @@ def upload(
             "  DHCP servers: "
             + ", ".join(f"{iface} ({ip})" for iface, ip in dhcp_servers)
         )
+    wifi_ssids = [
+        str(w["ssid"]) for w in (network.get("wifi_saved") or [])
+        if isinstance(w, dict) and w.get("ssid")
+    ]
+    if wifi_ssids:
+        changes.append(
+            f"  WiFi networks: {', '.join(wifi_ssids)} "
+            "(password prompted for any not already saved on the device)"
+        )
     reservations = network.get("dhcp_reservations")
     if isinstance(reservations, list):
         changes.append(
@@ -690,10 +720,27 @@ def upload(
     url = f"http://{host}" if not host.startswith("http") else host
     uploaded: list[str] = []
     reboot_needed: bool | None = False
+    wifi_credentials: list[tuple[str, str]] = []
 
     # 1. Push BlueOS config over HTTP
     with BlueOSClient(url, timeout=_httpx.Timeout(timeout, read=timeout * 3)) as client:
         try:
+            # Collect WiFi passwords up front so the run isn't interrupted later
+            if wifi_ssids:
+                saved = {
+                    w.get("ssid") for w in (client.get_wifi_saved() or [])
+                    if isinstance(w, dict)
+                }
+                for ssid in wifi_ssids:
+                    if ssid in saved:
+                        console.print(f"  WiFi '{ssid}' already saved on device — skipping")
+                        continue
+                    password = _prompt_wifi_password(ssid)
+                    if password:
+                        wifi_credentials.append((ssid, password))
+                    else:
+                        console.print(f"  Skipping WiFi '{ssid}'")
+
             with console.status("Uploading BlueOS configuration..."):
                 if config.get("hostname") is not None:
                     if client.set_hostname(config["hostname"]):
@@ -815,12 +862,37 @@ def upload(
         except MowerProvisionerError as e:
             err_console.print(f"[yellow]Warning: Could not write autopilot params: {e}[/yellow]")
 
-    console.print(f"[green]Upload complete: {', '.join(uploaded)}[/green]")
+    # 3. WiFi last — joining a network switches wlan0 and may drop this session
+    if wifi_credentials:
+        with BlueOSClient(url, timeout=_httpx.Timeout(timeout)) as client:
+            wifi_ok = 0
+            for ssid, password in wifi_credentials:
+                try:
+                    with console.status(f"Connecting device to WiFi '{ssid}'..."):
+                        ok = client.connect_wifi(ssid, password)
+                except BlueOSConnectionError:
+                    ok = False
+                if ok:
+                    wifi_ok += 1
+                else:
+                    err_console.print(
+                        f"[yellow]Warning: No confirmation for WiFi '{ssid}' — wrong password, "
+                        "or the device switched networks and dropped this connection. "
+                        "Check the device's WiFi status.[/yellow]"
+                    )
+            if wifi_ok:
+                uploaded.append(f"WiFi ({wifi_ok})")
 
-    # 3. Reboot so bootstrap recreates blueos-core with the dnsmasq.conf bind
+    console.print(f"[green]Upload complete: {', '.join(uploaded) or 'no changes needed'}[/green]")
+
+    # 4. Reboot so bootstrap recreates blueos-core with the dnsmasq.conf bind
     if reboot_needed:
         with BlueOSClient(url, timeout=_httpx.Timeout(timeout)) as client:
-            if client.reboot():
+            try:
+                rebooted = client.reboot()
+            except BlueOSConnectionError:
+                rebooted = False
+            if rebooted:
                 console.print(
                     "[bold yellow]Host config changed — rebooting "
                     f"{host}. DHCP reservations active after boot (~1-2 min).[/bold yellow]"
@@ -830,6 +902,146 @@ def upload(
                     f"[red]Reboot request failed — reboot {host} manually to "
                     "activate DHCP reservations.[/red]"
                 )
+
+
+GpsPortOption = Annotated[
+    Optional[str],
+    typer.Option("--port", "-p", help="Receiver serial port. Default: scan USB."),
+]
+
+
+def _resolve_gps_port(port: Optional[str]) -> str:
+    """Return the given port, or the single GNSS receiver found on USB."""
+    from .gnss_receiver import find_receivers
+
+    if port:
+        return port
+    found = find_receivers()
+    if not found:
+        err_console.print(
+            "[red]No supported GNSS receiver found on USB "
+            "(looked for Septentrio, USB vendor 0x152A).[/red]"
+        )
+        raise typer.Exit(1)
+    if len(found) > 1:
+        err_console.print("[red]Multiple GNSS receivers found — pick one with --port:[/red]")
+        for r in found:
+            err_console.print(f"  {r.port}  {r.vendor} SN {r.serial_number}")
+        raise typer.Exit(1)
+    r = found[0]
+    console.print(f"Found {r.vendor} receiver (SN {r.serial_number}) on {r.port}")
+    return r.port
+
+
+@gps_config_app.command("download")
+def gps_download(
+    output: Annotated[
+        Optional[Path],
+        typer.Option("--output", "-o", help="Output YAML file path. Default: gps-<serial>.yaml"),
+    ] = None,
+    port: GpsPortOption = None,
+) -> None:
+    """Download the receiver's identity and Boot configuration to YAML."""
+    from .exceptions import GnssReceiverError
+    from .extract import save_yaml
+    from .gnss_receiver import SeptentrioReceiver
+
+    port = _resolve_gps_port(port)
+    try:
+        with SeptentrioReceiver(port) as rx:
+            with console.status("Reading receiver configuration..."):
+                receiver = rx.identify()
+                commands = rx.get_config("Boot")
+    except GnssReceiverError as e:
+        err_console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+
+    out_path = output or Path(f"gps-{receiver.get('serial') or 'receiver'}.yaml")
+    save_yaml({"receiver": receiver, "config": commands}, out_path)
+    console.print(
+        f"[green]Saved {receiver.get('product')} (SN {receiver.get('serial')}, "
+        f"fw {receiver.get('firmware')}) Boot config — {len(commands)} commands — "
+        f"to {out_path}[/green]"
+    )
+
+
+@gps_config_app.command("upload")
+def gps_upload(
+    config_file: Annotated[
+        Path,
+        typer.Argument(help="Path to YAML file from 'config_gps download'."),
+    ],
+    port: GpsPortOption = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Show the commands without connecting to the receiver."),
+    ] = False,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", "-y", help="Skip confirmation prompt."),
+    ] = False,
+) -> None:
+    """Replace the receiver's Boot configuration with the YAML config.
+
+    Resets the running config to factory defaults, replays the YAML
+    commands, saves to Boot and reads Boot back to verify.
+    """
+    from .exceptions import GnssReceiverError, MowerProvisionerError
+    from .extract import load_yaml
+    from .gnss_receiver import SeptentrioReceiver
+
+    try:
+        data = load_yaml(config_file)
+    except MowerProvisionerError as e:
+        err_console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+    commands = data.get("config")
+    if not isinstance(commands, list) or not all(isinstance(c, str) for c in commands):
+        err_console.print(f"[red]{config_file}: 'config' must be a list of receiver commands.[/red]")
+        raise typer.Exit(1)
+    expected = data.get("receiver") or {}
+
+    console.print(f"[bold]{len(commands)} receiver commands from {config_file}:[/bold]")
+    for cmd in commands:
+        console.print(f"  {cmd}")
+    if dry_run:
+        console.print("[yellow]DRY RUN — receiver not contacted.[/yellow]")
+        return
+
+    port = _resolve_gps_port(port)
+    try:
+        with SeptentrioReceiver(port) as rx:
+            receiver = rx.identify()
+            console.print(
+                f"Receiver: {receiver.get('product')} SN {receiver.get('serial')} "
+                f"fw {receiver.get('firmware')}"
+            )
+            if expected.get("product") and expected["product"] != receiver.get("product"):
+                err_console.print(
+                    f"[yellow]Warning: file is for a {expected['product']}, "
+                    f"this receiver is a {receiver.get('product')}.[/yellow]"
+                )
+            if not yes:
+                typer.confirm(f"Replace the receiver's Boot config on {port}?", abort=True)
+
+            with console.status("Writing receiver configuration..."):
+                rx.apply_config(commands)
+                saved = rx.get_config("Boot")
+    except GnssReceiverError as e:
+        err_console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+
+    if saved == commands:
+        console.print(f"[green]Boot config written and verified ({len(commands)} commands).[/green]")
+    else:
+        # The receiver lists settings in its own canonical form, so a
+        # hand-written file can differ textually yet be equivalent.
+        err_console.print(
+            "[yellow]Boot config saved, but the receiver lists it differently "
+            "from the file:[/yellow]"
+        )
+        for cmd in saved:
+            err_console.print(f"  {cmd}")
 
 
 @nav_app.command("sim")

@@ -68,7 +68,7 @@ class TestDownload:
         ])
 
         out = tmp_path / "test.yaml"
-        result = runner.invoke(app, ["config", "download", "192.168.2.2", "-o", str(out)])
+        result = runner.invoke(app, ["config_blueos", "download", "192.168.2.2", "-o", str(out)])
         assert result.exit_code == 0, result.output
 
         data = yaml.safe_load(out.read_text())
@@ -88,7 +88,7 @@ class TestDownload:
         ])
 
         out = tmp_path / "test.yaml"
-        result = runner.invoke(app, ["config", "download", "192.168.2.2", "-o", str(out)])
+        result = runner.invoke(app, ["config_blueos", "download", "192.168.2.2", "-o", str(out)])
         assert result.exit_code == 0, result.output
 
         data = yaml.safe_load(out.read_text())
@@ -107,7 +107,7 @@ class TestDownload:
 
         out = tmp_path / "test.yaml"
         result = runner.invoke(
-            app, ["config", "download", "192.168.2.2", "-o", str(out), "--include-calibration"]
+            app, ["config_blueos", "download", "192.168.2.2", "-o", str(out), "--include-calibration"]
         )
         assert result.exit_code == 0, result.output
 
@@ -123,7 +123,7 @@ class TestDownload:
             _make_param_msg("CRUISE_SPEED", 2.0, 0, 1),
         ])
 
-        result = runner.invoke(app, ["config", "download", "blueos.local"])
+        result = runner.invoke(app, ["config_blueos", "download", "blueos.local"])
         assert result.exit_code == 0, result.output
         assert (tmp_path / "blueos.local.yaml").exists()
 
@@ -138,7 +138,7 @@ class TestDownload:
         ])
 
         out = tmp_path / "test.yaml"
-        result = runner.invoke(app, ["config", "download", "192.168.2.2", "-o", str(out)])
+        result = runner.invoke(app, ["config_blueos", "download", "192.168.2.2", "-o", str(out)])
         assert result.exit_code == 0, result.output
 
         data = yaml.safe_load(out.read_text())
@@ -154,7 +154,7 @@ class TestDownload:
         ])
 
         out = tmp_path / "test.yaml"
-        result = runner.invoke(app, ["config", "download", "192.168.2.2", "-o", str(out)])
+        result = runner.invoke(app, ["config_blueos", "download", "192.168.2.2", "-o", str(out)])
         assert result.exit_code == 0, result.output
 
         data = yaml.safe_load(out.read_text())
@@ -173,7 +173,7 @@ class TestDownload:
         ])
 
         out = tmp_path / "test.yaml"
-        result = runner.invoke(app, ["config", "download", "192.168.2.2", "-o", str(out)])
+        result = runner.invoke(app, ["config_blueos", "download", "192.168.2.2", "-o", str(out)])
         assert result.exit_code == 0, result.output
 
         data = yaml.safe_load(out.read_text())
@@ -211,7 +211,7 @@ class TestUpload:
         cfg = tmp_path / "config.yaml"
         self._write_config(cfg, params={"CRUISE_SPEED": 2.0, "WP_RADIUS": 3.0})
 
-        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
+        result = runner.invoke(app, ["config_blueos", "upload", "192.168.2.2", str(cfg), "-y"])
         assert result.exit_code == 0, result.output
 
         mock_client.set_hostname.assert_called_once_with("mower-01")
@@ -227,7 +227,7 @@ class TestUpload:
         cfg = tmp_path / "config.yaml"
         self._write_config(cfg, params={"CRUISE_SPEED": 2.0})
 
-        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "--dry-run"])
+        result = runner.invoke(app, ["config_blueos", "upload", "192.168.2.2", str(cfg), "--dry-run"])
         assert result.exit_code == 0, result.output
         assert "DRY RUN" in result.output
 
@@ -235,7 +235,7 @@ class TestUpload:
         cfg = tmp_path / "empty.yaml"
         cfg.write_text(yaml.dump({"network": {"hotspot": True}}))
 
-        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg)])
+        result = runner.invoke(app, ["config_blueos", "upload", "192.168.2.2", str(cfg)])
         assert result.exit_code == 0
         assert "Nothing to upload" in result.output
 
@@ -254,7 +254,7 @@ class TestUpload:
         cfg = tmp_path / "config.yaml"
         self._write_config(cfg, params={"CRUISE_SPEED": 2.0, cal_param: 0.5})
 
-        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
+        result = runner.invoke(app, ["config_blueos", "upload", "192.168.2.2", str(cfg), "-y"])
         assert result.exit_code == 0, result.output
 
         call_params = mock_write.call_args[0][1]
@@ -277,7 +277,7 @@ class TestUpload:
         cfg = tmp_path / "config.yaml"
         self._write_config(cfg, params={"CRUISE_SPEED": 2.0})
 
-        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
+        result = runner.invoke(app, ["config_blueos", "upload", "192.168.2.2", str(cfg), "-y"])
         assert result.exit_code == 0, result.output
         assert "Failed to set hostname" in result.output
 
@@ -300,7 +300,7 @@ class TestUpload:
             bag={"ext.cam": {"res": "1080p"}, "ext.gps": {"rate": 10}},
         )
 
-        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
+        result = runner.invoke(app, ["config_blueos", "upload", "192.168.2.2", str(cfg), "-y"])
         assert result.exit_code == 0, result.output
         assert mock_client.set_bag.call_count == 2
 
@@ -329,7 +329,7 @@ class TestUpload:
         }
         cfg.write_text(yaml.dump(config))
 
-        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
+        result = runner.invoke(app, ["config_blueos", "upload", "192.168.2.2", str(cfg), "-y"])
         assert result.exit_code == 0, result.output
         assert "mediamtx config" in result.output
 
@@ -363,7 +363,7 @@ class TestUpload:
         }
         cfg.write_text(yaml.dump(config))
 
-        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
+        result = runner.invoke(app, ["config_blueos", "upload", "192.168.2.2", str(cfg), "-y"])
         assert result.exit_code == 0, result.output
         assert "Failed to push MediaMTX config" in result.output
 
@@ -396,7 +396,7 @@ class TestUploadProvisioning:
         mock_cls.return_value = client
         cfg = tmp_path / "config.yaml"
         cfg.write_text(yaml.dump(config))
-        return runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y", *extra])
+        return runner.invoke(app, ["config_blueos", "upload", "192.168.2.2", str(cfg), "-y", *extra])
 
     @patch("skynet.blueos_api.BlueOSClient")
     def test_installs_only_missing_extensions(self, mock_cls, tmp_path):
@@ -505,9 +505,77 @@ class TestDownloadReservations:
         mock_mavlink.side_effect = MowerProvisionerError("no mav")
 
         out = tmp_path / "out.yaml"
-        result = runner.invoke(app, ["config", "download", "192.168.2.2", "-o", str(out)])
+        result = runner.invoke(app, ["config_blueos", "download", "192.168.2.2", "-o", str(out)])
         assert result.exit_code == 0, result.output
         data = yaml.safe_load(out.read_text())
         assert data["network"]["dhcp_reservations"] == [
             {"mac": "64:35:1c:00:f0:79", "ip": "192.168.10.2", "hostname": "routecam"}
         ]
+
+
+class TestUploadWifi:
+    def _client(self, saved_ssids: list[str]):
+        client = _mock_blueos_client()
+        client.get_wifi_saved.return_value = [{"networkid": 0, "ssid": s} for s in saved_ssids]
+        client.connect_wifi.return_value = True
+        return client
+
+    def _upload(self, mock_cls, client, tmp_path, ssids, *extra, input=None):
+        mock_cls.return_value = client
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(yaml.dump({"network": {"wifi_saved": [{"networkid": 0, "ssid": s} for s in ssids]}}))
+        return runner.invoke(
+            app, ["config_blueos", "upload", "192.168.2.2", str(cfg), "-y", *extra], input=input,
+        )
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_prompts_and_connects_missing_network(self, mock_cls, tmp_path):
+        client = self._client(saved_ssids=[])
+        result = self._upload(mock_cls, client, tmp_path, ["007"], input="s3cret!!\ns3cret!!\n")
+        assert result.exit_code == 0, result.output
+        client.connect_wifi.assert_called_once_with("007", "s3cret!!")
+        assert "WiFi (1)" in result.output
+        assert "s3cret!!" not in result.output
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_skips_already_saved_network_without_prompt(self, mock_cls, tmp_path):
+        client = self._client(saved_ssids=["007"])
+        result = self._upload(mock_cls, client, tmp_path, ["007"], input="")
+        assert result.exit_code == 0, result.output
+        assert "already saved" in result.output
+        client.connect_wifi.assert_not_called()
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_blank_password_skips(self, mock_cls, tmp_path):
+        client = self._client(saved_ssids=[])
+        result = self._upload(mock_cls, client, tmp_path, ["guest"], input="\n")
+        assert result.exit_code == 0, result.output
+        client.connect_wifi.assert_not_called()
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_connect_failure_warns(self, mock_cls, tmp_path):
+        client = self._client(saved_ssids=[])
+        client.connect_wifi.return_value = False
+        result = self._upload(mock_cls, client, tmp_path, ["007"], input="pw123456\npw123456\n")
+        assert result.exit_code == 0, result.output
+        assert "No confirmation for WiFi '007'" in result.output
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_dry_run_does_not_prompt(self, mock_cls, tmp_path):
+        client = self._client(saved_ssids=[])
+        result = self._upload(mock_cls, client, tmp_path, ["007"], "--dry-run", input="")
+        assert result.exit_code == 0, result.output
+        assert "WiFi networks: 007" in result.output
+        assert "password for" not in result.output
+        client.connect_wifi.assert_not_called()
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_mismatched_confirmation_reprompts(self, mock_cls, tmp_path):
+        client = self._client(saved_ssids=[])
+        result = self._upload(
+            mock_cls, client, tmp_path, ["007"],
+            input="first111\nother222\nfinal333\nfinal333\n",
+        )
+        assert result.exit_code == 0, result.output
+        assert "did not match" in result.output
+        client.connect_wifi.assert_called_once_with("007", "final333")

@@ -51,3 +51,7 @@ class GpsSimError(MowerProvisionerError):
 
 class FrameMismatchError(GpsSimError):
     """Autopilot frame is not the expected skid-steer configuration."""
+
+
+class GnssReceiverError(MowerProvisionerError):
+    """Error talking to a USB-attached GNSS receiver."""

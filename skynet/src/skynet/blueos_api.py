@@ -145,6 +145,19 @@ class BlueOSClient:
     def get_hotspot(self) -> Any | None:
         return self._get_json("/wifi-manager/v1.0/hotspot")
 
+    def connect_wifi(self, ssid: str, password: str, timeout: float = 60.0) -> bool:
+        """Save and connect to a WiFi network.
+
+        BlueOS switches wlan0 to this network immediately, which can drop
+        the HTTP connection if the device is reached over another WiFi.
+        """
+        return self._post(
+            "/wifi-manager/v1.0/connect",
+            params={"hidden": False},
+            json={"ssid": ssid, "password": password},
+            timeout=httpx.Timeout(timeout),
+        )
+
     # -- Network (Cable Guy) --
 
     def add_ip(self, interface_name: str, ip_address: str) -> bool:
