@@ -44,7 +44,7 @@
 - [x] 3.4 Without `--yes`, call `typer.confirm(f"Upload {len(items)-1}
       waypoints to {device}?", abort=True)`.
 - [x] 3.5 Open `mavlink_connection(device, baud=baud)` (same as
-      `misc connect`), drive `upload_mission` under a Rich `Progress`, and
+      `pixhawk connect`), drive `upload_mission` under a Rich `Progress`, and
       print a green success message with the device and waypoint count.
 - [x] 3.6 Map `MissionUploadError` (and any `MowerProvisionerError`) to a
       red stderr message and `typer.Exit(1)`.

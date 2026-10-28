@@ -1,6 +1,6 @@
 ## Context
 
-Skynet already has a fully working `misc connect` command that opens a
+Skynet already has a fully working `pixhawk connect` command that opens a
 MAVLink link through `mavlink_connection(device, baud)` and waits for a
 heartbeat. It transparently supports both USB serial (`/dev/ttyACM0`) and
 the BlueOS MAVLink proxy (`tcp:<host>:5760`) — the same code path with just
@@ -20,7 +20,7 @@ home at index 0.
 **Goals**
 - One-shot upload of a `.waypoints` file to a Pixhawk Cube Orange+ over
   either USB serial or the BlueOS TCP MAVLink proxy.
-- Use the exact same connection plumbing as `misc connect`
+- Use the exact same connection plumbing as `pixhawk connect`
   (`mavlink_connection()` context manager).
 - Fail loudly with a typed exception and non-zero exit on any MAVLink
   mission-protocol error; never leave a partial mission on the autopilot
@@ -85,7 +85,7 @@ implicitly replaces the existing mission on ArduPilot, and sending
 
 ### Decision 5: Reuse `mavlink_connection()` exactly — no new transport
 
-The command body is a straight analogue of `misc connect`:
+The command body is a straight analogue of `pixhawk connect`:
 
 ```python
 with mavlink_connection(device, baud=baud) as conn:
@@ -95,7 +95,7 @@ with mavlink_connection(device, baud=baud) as conn:
 Device string defaults to `/dev/ttyACM0` and is overridable via `--device`
 or `MOWER_DEVICE`. Pointing at a BlueOS proxy is just
 `-d tcp:192.168.2.2:5760` — no new flag, no `--host` shortcut, no URL
-parsing. This keeps the command surface identical to `misc connect` and
+parsing. This keeps the command surface identical to `pixhawk connect` and
 avoids a second way to express "where is the autopilot."
 
 ## Risks / Trade-offs

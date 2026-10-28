@@ -48,7 +48,7 @@ skynet nav sim -d tcp:192.168.2.2:5760 --ground-speed 2 --yes
 GPS mode. Originals are saved to a sidecar file at
 `~/.config/skynet/sim_restore_<slug>.param` before any mutation and
 restored on exit. If the process is killed (`kill -9`) mid-run, recover
-with `skynet misc write <sidecar> --yes --include-calibration`.
+with `skynet pixhawk write <sidecar> --yes --include-calibration`.
 
 ## Commands
 

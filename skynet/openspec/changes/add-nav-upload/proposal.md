@@ -17,7 +17,7 @@ MAVLink-touching command in this CLI already uses.
 - **Add `nav upload` subcommand** under the existing `nav` Typer group that
   reads a QGC WPL 110 `.waypoints` file, opens a MAVLink connection using the
   shared `mavlink_connection()` context manager (same transport as
-  `misc connect`), and uploads the mission to the autopilot via the MAVLink
+  `pixhawk connect`), and uploads the mission to the autopilot via the MAVLink
   mission-upload protocol (`MISSION_COUNT` → `MISSION_REQUEST(_INT)` →
   `MISSION_ITEM_INT` → `MISSION_ACK`).
 - **Add a `mission-planning` capability requirement** for a `read_waypoints`

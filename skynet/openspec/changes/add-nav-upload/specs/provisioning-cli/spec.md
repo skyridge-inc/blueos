@@ -3,11 +3,11 @@
 ### Requirement: nav upload Command
 The `nav upload` command SHALL upload a QGC WPL 110 `.waypoints` file to the
 autopilot over MAVLink using the shared `mavlink_connection()` context
-manager — the same transport layer used by `misc connect`. It SHALL accept
+manager — the same transport layer used by `pixhawk connect`. It SHALL accept
 a positional `waypoint_file` argument and the shared `--device` / `-d`
 (default `/dev/ttyACM0`, overridable via `MOWER_DEVICE`), `--baud` / `-b`
 (default 115200), `--dry-run`, and `--yes` / `-y` options. The same device
-string syntax used by `misc connect` SHALL be accepted unchanged, so
+string syntax used by `pixhawk connect` SHALL be accepted unchanged, so
 pointing at the BlueOS MAVLink proxy is spelled `-d tcp:<host>:5760`.
 
 The command SHALL parse the waypoint file with
@@ -37,7 +37,7 @@ reuse `skynet.connection.mavlink_connection` verbatim.
 - **WHEN** the user runs `mower-provision nav upload
   ./output/700_long_mower1.waypoints -d tcp:192.168.2.2:5760 --yes`
 - **THEN** the CLI opens a TCP MAVLink connection to the BlueOS proxy via
-  the same `mavlink_connection()` call used by `misc connect`
+  the same `mavlink_connection()` call used by `pixhawk connect`
 - **AND** the upload completes against the Pixhawk Cube Orange+ behind the
   proxy
 

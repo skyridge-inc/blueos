@@ -118,7 +118,7 @@ The required param set SHALL include at minimum `GPS_TYPE`,
 
 1. Refuse if the sidecar file already exists, raising `GpsSimError`
    with an error message that includes the exact
-   `skynet misc write <sidecar> --yes --include-calibration` command
+   `skynet pixhawk write <sidecar> --yes --include-calibration` command
    the operator needs to recover.
 2. Fetch current values for the required params from the autopilot.
 3. Write those originals to the sidecar file as a valid skynet `.param`
@@ -310,7 +310,7 @@ tests at PR time; the spec does not prescribe test code.
 6. **Crash-recovery drill** (documented manual step): start the sim,
    `kill -9` it mid-run, confirm the sidecar file remains on disk with
    the original param values, confirm that
-   `skynet misc write <sidecar> --yes --include-calibration` restores
+   `skynet pixhawk write <sidecar> --yes --include-calibration` restores
    the autopilot, and confirm that the next `nav sim` run refuses to
    start until the sidecar is removed.
 

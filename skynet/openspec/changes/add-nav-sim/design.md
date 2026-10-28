@@ -4,7 +4,7 @@ The target vehicle is an ArduRover skid-steer mower on a Pixhawk Cube
 Orange+, paired with an ArduSimple simpleRTK3B (Unicore UM982) dual-antenna
 GPS that normally provides both position and true heading. The rover runs
 under a BlueOS companion computer that exposes a MAVLink proxy at
-`tcp:<host>:5760` — the same endpoint `skynet misc connect` and
+`tcp:<host>:5760` — the same endpoint `skynet pixhawk connect` and
 `skynet nav upload` already talk to.
 
 `templates/mower_base.param` confirms the frame:
@@ -147,7 +147,7 @@ Required autopilot params for the sim to work:
 
 1. Check for a pre-existing sidecar at
    `~/.config/skynet/sim_restore_<host_slug>.param`. If present, refuse
-   to start with an error that prints the exact `skynet misc write`
+   to start with an error that prints the exact `skynet pixhawk write`
    command needed to recover and instructs the operator to delete the
    sidecar before retrying. This is the crash-recovery gate.
 2. `fetch_all_params` the relevant param subset using the existing
@@ -165,7 +165,7 @@ Required autopilot params for the sim to work:
 successful restore, the sidecar file on disk contains exactly the values
 that need to be rewritten to bring the autopilot back to its pre-sim
 state. Killing the sim with `kill -9` leaves the operator with one
-command: `skynet misc write <sidecar> --yes --include-calibration`.
+command: `skynet pixhawk write <sidecar> --yes --include-calibration`.
 
 `<host_slug>` is derived from the `--device` argument: for
 `tcp:192.168.2.2:5760` → `tcp_192_168_2_2_5760`; for `/dev/ttyACM0` →
@@ -243,7 +243,7 @@ registered with the save/restore context manager.
 ### Decision 8: Device-string reuse
 
 The command takes `--device` / `-d` and `--baud` / `-b` with the exact
-same defaults and semantics as `misc connect` and `nav upload`: default
+same defaults and semantics as `pixhawk connect` and `nav upload`: default
 `/dev/ttyACM0`, env `MOWER_DEVICE`. Pointing at the BlueOS proxy is just
 `-d tcp:<host>:5760`. No second way to spell "where is the autopilot."
 
@@ -263,7 +263,7 @@ same defaults and semantics as `misc connect` and `nav upload`: default
   in 2D.
 - **Partial param writes mid-startup**: fully handled by the sidecar
   recovery file — any partial write is restorable via
-  `skynet misc write`.
+  `skynet pixhawk write`.
 - **Missed `SERVO_OUTPUT_RAW` stream**: startup check aborts loudly
   within 2 s, so the operator sees the failure instead of a stuck rover.
 - **Sidecar staleness after a clean run that the OS killed between

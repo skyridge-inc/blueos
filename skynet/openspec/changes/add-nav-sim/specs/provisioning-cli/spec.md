@@ -4,7 +4,7 @@
 The `nav sim` command SHALL run a software-in-the-loop GPS/heading
 simulator against a real autopilot over MAVLink using the shared
 `skynet.connection.mavlink_connection()` context manager — the same
-transport used by `misc connect` and `nav upload`. It SHALL download the
+transport used by `pixhawk connect` and `nav upload`. It SHALL download the
 current mission from the autopilot via the `mission-download` capability,
 spawn the simulated rover at the mission item indexed by `--start-seq`
 (default `1`, the first real waypoint after home), and drive a closed
@@ -15,7 +15,7 @@ autopilot.
 The command SHALL accept the shared `--device` / `-d` (default
 `/dev/ttyACM0`, overridable via `MOWER_DEVICE`) and `--baud` / `-b`
 (default 115200) options. Pointing at the BlueOS MAVLink proxy SHALL be
-spelled `-d tcp:<host>:5760`, identically to `misc connect`. The command
+spelled `-d tcp:<host>:5760`, identically to `pixhawk connect`. The command
 SHALL also accept:
 
 - `--ground-speed MPH` (default `2.0`) — max forward speed at full
@@ -41,7 +41,7 @@ Before running the sim loop, the command SHALL:
    `SERVO3_FUNCTION != 74`).
 2. Refuse at startup if a leftover sim-restore sidecar file exists for
    this device, with an error message containing the exact
-   `skynet misc write` recovery command.
+   `skynet pixhawk write` recovery command.
 3. Reject missions with `count == 0` or `count == 1` — there is no real
    waypoint to spawn at.
 
@@ -109,7 +109,7 @@ reuse `skynet.connection.mavlink_connection` verbatim.
   `~/.config/skynet/` for this device
 - **THEN** the CLI refuses to start
 - **AND** the error message contains the exact
-  `skynet misc write <sidecar-path> --yes --include-calibration`
+  `skynet pixhawk write <sidecar-path> --yes --include-calibration`
   command the operator needs to recover
 
 #### Scenario: Start at first real waypoint

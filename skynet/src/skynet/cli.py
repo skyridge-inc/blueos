@@ -32,7 +32,7 @@ gps_config_app = typer.Typer(
     help="GNSS RTK/heading receiver configuration over USB.",
     no_args_is_help=True,
 )
-misc_app = typer.Typer(
+pixhawk_app = typer.Typer(
     help="Low-level MAVLink parameter utilities and config extraction.",
     no_args_is_help=True,
 )
@@ -42,7 +42,7 @@ nav_app = typer.Typer(
 )
 app.add_typer(config_app, name="config_blueos")
 app.add_typer(gps_config_app, name="config_gps")
-app.add_typer(misc_app, name="misc")
+app.add_typer(pixhawk_app, name="pixhawk")
 app.add_typer(nav_app, name="nav")
 
 console = Console()
@@ -150,7 +150,7 @@ def main(
     """MAVLink fleet provisioning for ArduPilot mowers."""
 
 
-@misc_app.command()
+@pixhawk_app.command()
 def connect(
     device: DeviceOption = DEFAULT_DEVICE,
     baud: BaudOption = DEFAULT_BAUD,
@@ -175,7 +175,7 @@ def connect(
     console.print("[green]Connection successful![/green]")
 
 
-@misc_app.command()
+@pixhawk_app.command()
 def read(
     device: DeviceOption = DEFAULT_DEVICE,
     baud: BaudOption = DEFAULT_BAUD,
@@ -215,7 +215,7 @@ def read(
         console.print(table)
 
 
-@misc_app.command()
+@pixhawk_app.command()
 def write(
     param_file: Annotated[Path, typer.Argument(help="Path to .param file.")],
     device: DeviceOption = DEFAULT_DEVICE,
@@ -262,7 +262,7 @@ def write(
     console.print(f"[green]Wrote {len(written)} parameters to {device}.[/green]")
 
 
-@misc_app.command()
+@pixhawk_app.command()
 def diff(
     param_file: Annotated[Path, typer.Argument(help="Path to .param file.")],
     device: DeviceOption = DEFAULT_DEVICE,
@@ -308,7 +308,7 @@ def diff(
     )
 
 
-@misc_app.command()
+@pixhawk_app.command()
 def sync(
     param_file: Annotated[Path, typer.Argument(help="Path to .param file.")],
     device: DeviceOption = DEFAULT_DEVICE,
@@ -374,7 +374,7 @@ def sync(
     console.print(f"[green]Synced {len(written)} parameters to {device}.[/green]")
 
 
-@misc_app.command()
+@pixhawk_app.command()
 def backup(
     device: DeviceOption = DEFAULT_DEVICE,
     baud: BaudOption = DEFAULT_BAUD,
@@ -409,7 +409,7 @@ def backup(
     )
 
 
-@misc_app.command("extract-config")
+@pixhawk_app.command("extract-config")
 def extract_config_cmd(
     url: Annotated[
         str,
@@ -1160,7 +1160,7 @@ def nav_sim(
     attitude loop, motor outputs, and EKF are all real — only the GPS and
     heading are simulated.
 
-    Uses the same connection machinery as `misc connect`, so pointing at the
+    Uses the same connection machinery as `pixhawk connect`, so pointing at the
     BlueOS MAVLink proxy is just `-d tcp:<host>:5760`.
     """
     import select as _select
@@ -2663,7 +2663,7 @@ def nav_upload(
 ) -> None:
     """Upload a .waypoints mission file to the autopilot via MAVLink.
 
-    Uses the same connection machinery as `misc connect`, so pointing at the
+    Uses the same connection machinery as `pixhawk connect`, so pointing at the
     BlueOS MAVLink proxy is just `-d tcp:<host>:5760`.
     """
     from .exceptions import MissionUploadError, MowerProvisionerError
