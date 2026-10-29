@@ -10,7 +10,13 @@ import yaml
 
 from .blueos_api import BlueOSClient
 from .exceptions import ParamFileError
-from .host_config import DNSMASQ_HOST_PATH, parse_dnsmasq_conf
+from .host_config import (
+    DNSMASQ_HOST_PATH,
+    parse_dnsmasq_conf,
+    parse_wifi_profile,
+    wifi_profile_get_command,
+)
+from .params import EPSILON
 
 
 # Candidate paths for MediaMTX config via the BlueOS file browser API.
@@ -73,7 +79,11 @@ def output_filename(url: str) -> Path:
 
 
 def _clean_ethernet(raw: list[Any] | None) -> list[dict[str, Any]] | None:
-    """Strip ephemeral routing/info from ethernet entries, keep addresses."""
+    """Strip ephemeral routing/info from ethernet entries, keep addresses.
+
+    DHCP-client leases (``mode: client``, e.g. eth0 behind Starlink) are
+    always dynamic, so they are never captured.
+    """
     if raw is None:
         return None
     cleaned = []
@@ -82,7 +92,10 @@ def _clean_ethernet(raw: list[Any] | None) -> list[dict[str, Any]] | None:
             continue
         entry: dict[str, Any] = {"name": iface.get("name")}
         if "addresses" in iface:
-            entry["addresses"] = iface["addresses"]
+            entry["addresses"] = [
+                a for a in iface["addresses"] or []
+                if not (isinstance(a, dict) and a.get("mode") == "client")
+            ]
         cleaned.append(entry)
     return cleaned
 
@@ -115,6 +128,24 @@ def fetch_dhcp_reservations(client: BlueOSClient) -> list[dict[str, Any]] | None
     return parse_dnsmasq_conf(result.get("stdout") or "")
 
 
+def fetch_wifi_saved(client: BlueOSClient) -> list[Any] | None:
+    """Saved WiFi networks, each with the interface/band its host profile is pinned to.
+
+    BlueOS only reports SSIDs; ``interface`` and ``band`` come from the
+    NetworkManager profile on the host and are omitted when unset.
+    """
+    saved = client.get_wifi_saved()
+    if not isinstance(saved, list):
+        return saved
+    for entry in saved:
+        if not isinstance(entry, dict) or not entry.get("ssid"):
+            continue
+        result = client.run_host_command(wifi_profile_get_command(str(entry["ssid"])))
+        if isinstance(result, dict) and result.get("return_code") == 0:
+            entry.update(parse_wifi_profile(result.get("stdout") or ""))
+    return saved
+
+
 def extract_config(client: BlueOSClient) -> dict[str, Any]:
     """Fetch provisionable configuration from a BlueOS device.
 
@@ -137,7 +168,7 @@ def extract_config(client: BlueOSClient) -> dict[str, Any]:
     # Networking — static IP addresses only, no ephemeral routes
     config["network"] = {
         "ethernet": _clean_ethernet(client.get_ethernet()),
-        "wifi_saved": client.get_wifi_saved(),
+        "wifi_saved": fetch_wifi_saved(client),
         "hotspot": client.get_hotspot(),
         "dhcp_reservations": fetch_dhcp_reservations(client),
     }
@@ -162,6 +193,46 @@ def load_yaml(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ParamFileError(f"Expected a YAML mapping in {path}, got {type(data).__name__}")
     return data
+
+
+# Fleet-wide autopilot params shared by every rover YAML in the same directory.
+AUTOPILOT_BASE_FILENAME = "autopilot_base.yaml"
+
+
+def default_base_path(rover_yaml: Path) -> Path:
+    """The autopilot base file that sits next to a rover YAML."""
+    return rover_yaml.parent / AUTOPILOT_BASE_FILENAME
+
+
+def load_autopilot_base(path: Path) -> dict[str, float]:
+    """Read the ``autopilot_params`` mapping from an autopilot base YAML.
+
+    Raises:
+        ParamFileError: If the file is unreadable or the section is not a mapping.
+    """
+    params = load_yaml(path).get("autopilot_params")
+    if params is None:
+        return {}
+    if not isinstance(params, dict):
+        raise ParamFileError(f"autopilot_params in {path} must be a mapping")
+    return params
+
+
+def merge_autopilot_params(
+    base: dict[str, float], overrides: dict[str, float] | None,
+) -> dict[str, float]:
+    """Base params with a rover's own params applied on top (rover wins)."""
+    return dict(sorted({**base, **(overrides or {})}.items()))
+
+
+def params_diff_from_base(
+    params: dict[str, float], base: dict[str, float], epsilon: float = EPSILON,
+) -> dict[str, float]:
+    """Params that are missing from the base or differ from it by more than epsilon."""
+    return {
+        k: v for k, v in sorted(params.items())
+        if k not in base or abs(float(v) - float(base[k])) > epsilon
+    }
 
 
 def save_yaml(config: dict[str, Any], path: Path) -> None:

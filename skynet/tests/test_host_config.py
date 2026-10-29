@@ -11,7 +11,10 @@ from skynet.host_config import (
     DNSMASQ_HOST_PATH,
     ensure_bind_command,
     parse_dnsmasq_conf,
+    parse_wifi_profile,
     render_dnsmasq_conf,
+    wifi_profile_get_command,
+    wifi_profile_set_command,
     write_file_command,
 )
 
@@ -86,3 +89,28 @@ class TestCommands:
 
     def test_ensure_bind_command_uses_sudo(self):
         assert ensure_bind_command().startswith("sudo python3 -c ")
+
+
+class TestWifiProfile:
+    def test_parse_both_set(self):
+        assert parse_wifi_profile("wlan1\nbg\n") == {"interface": "wlan1", "band": "bg"}
+
+    def test_parse_omits_unset(self):
+        assert parse_wifi_profile("wlan0\n\n") == {"interface": "wlan0"}
+        assert parse_wifi_profile("") == {}
+
+    def test_get_command_quotes_ssid(self):
+        cmd = wifi_profile_get_command("my net")
+        assert shlex.split(cmd)[-1] == "my net"
+        assert "connection.interface-name,802-11-wireless.band" in cmd
+
+    def test_set_command_only_given_keys(self):
+        cmd = wifi_profile_set_command("007", {"band": "bg"})
+        assert "802-11-wireless.band bg" in cmd
+        assert "interface-name" not in cmd
+        assert cmd.endswith("connection up id 007")
+
+    def test_set_command_quotes_values(self):
+        cmd = wifi_profile_set_command("a'b", {"interface": "wlan1"})
+        modify = cmd.split(" && ")[0]
+        assert shlex.split(modify)[5] == "a'b"

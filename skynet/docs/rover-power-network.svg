@@ -22,7 +22,7 @@
 
   <rect width="1220" height="830" fill="#ffffff"/>
   <text x="30" y="36" font-size="22" font-weight="700" fill="#0f172a">Rover comms &amp; power: minimal-power layout, no network switch (24 V electronics bus)</text>
-  <text x="30" y="60" class="s">Pi 5 is the router: Starlink = WAN 1, nearby Wi-Fi = WAN 2 (failover), camera on its own LAN port. Pi cuts Starlink power when local Wi-Fi is good.</text>
+  <text x="30" y="60" class="s">Pi 5 is the router: Starlink = WAN 1 on onboard eth0, nearby Wi-Fi = WAN 2 (failover), camera on USB Ethernet eth1. Pi cuts Starlink power when local Wi-Fi is good.</text>
 
   <!-- Battery -->
   <rect x="30" y="360" width="170" height="110" rx="10" class="box"/>
@@ -67,24 +67,22 @@
   <path d="M1020,110 L1090,80" class="wifi"/>
   <text x="1094" y="78" class="lbl">satellites</text>
 
-  <!-- Starlink -> USB GbE -> Pi -->
-  <line x1="910" y1="200" x2="910" y2="288" class="dat" marker-end="url(#arB)"/>
-  <text x="918" y="250" class="lbl">Cat6 (RJ45)</text>
-  <rect x="835" y="290" width="150" height="40" rx="6" class="box"/>
-  <text x="846" y="307" font-size="12" font-weight="700" fill="#0f172a">USB 3 GbE adapter</text>
-  <text x="846" y="322" class="lbl">eth1: WAN 1</text>
-  <line x1="910" y1="330" x2="910" y2="398" class="dat" marker-end="url(#arB)"/>
-  <text x="918" y="370" class="lbl">USB 3</text>
+  <!-- Starlink -> Pi onboard eth0 -->
+  <line x1="910" y1="200" x2="910" y2="398" class="dat" marker-end="url(#arB)"/>
+  <text x="918" y="290" class="lbl">Cat6 → Pi 5 onboard RJ45 (eth0)</text>
+  <text x="918" y="306" class="lbl">DHCP client</text>
+  <text x="918" y="390" font-size="12" font-weight="700" fill="#2563eb">eth0</text>
 
   <!-- Raspberry Pi 5 -->
   <rect x="760" y="400" width="230" height="160" rx="10" class="key"/>
   <text x="774" y="426" class="t">Raspberry Pi 5 (router)</text>
-  <text x="774" y="448" class="s">eth1  = Starlink (WAN 1, primary)</text>
-  <text x="774" y="466" class="s">wlan0 = nearby Wi-Fi (WAN 2)</text>
-  <text x="774" y="484" class="s">eth0  = camera LAN + DHCP/NAT</text>
-  <text x="774" y="502" class="s">Health-checked failover</text>
-  <text x="774" y="520" class="s">GPIO17 → Starlink relay</text>
-  <text x="774" y="544" class="w">3–7 W</text>
+  <text x="774" y="446" class="s">eth0  = Starlink (onboard, DHCP client)</text>
+  <text x="774" y="462" class="s">wlan0 = nearby Wi-Fi (WAN 2)</text>
+  <text x="774" y="478" class="s">eth1  = camera (USB Ethernet adapter)</text>
+  <text x="790" y="494" class="s">↳ DHCP server, gw 192.168.10.1</text>
+  <text x="774" y="510" class="s">Health-checked failover</text>
+  <text x="774" y="526" class="s">GPIO17 → Starlink relay</text>
+  <text x="774" y="548" class="w">3–7 W</text>
 
   <!-- Branch 2: PoE injector -> camera -->
   <line x1="470" y1="335" x2="518" y2="335" class="pwr" marker-end="url(#arR)"/>
@@ -92,14 +90,20 @@
   <rect x="520" y="300" width="180" height="70" rx="8" class="box"/>
   <text x="532" y="322" class="t">PoE+ injector</text>
   <text x="532" y="340" class="s">12–60 V in → 50 V PoE</text>
-  <text x="532" y="356" class="s">data in ← Pi eth0</text>
-  <path d="M760,450 H730 V355 H702" class="dat" marker-end="url(#arB)"/>
-  <text x="706" y="395" class="lbl">eth0</text>
+  <text x="532" y="356" class="s">data in ← Pi eth1</text>
+  <rect x="525" y="395" width="170" height="40" rx="6" class="box"/>
+  <text x="536" y="412" font-size="12" font-weight="700" fill="#0f172a">USB Ethernet adapter</text>
+  <text x="536" y="427" class="lbl">eth1 · 192.168.10.1/24 · DHCP</text>
+  <path d="M760,440 H730 V415 H697" class="dat" marker-end="url(#arB)"/>
+  <text x="704" y="408" class="lbl">USB 3</text>
+  <line x1="610" y1="395" x2="610" y2="372" class="dat" marker-end="url(#arB)"/>
+  <text x="618" y="388" class="lbl">eth1</text>
   <line x1="610" y1="300" x2="610" y2="252" class="poe" marker-end="url(#arT)"/>
   <text x="620" y="282" class="lbl">PoE + data</text>
   <rect x="520" y="190" width="180" height="60" rx="8" class="box"/>
-  <text x="532" y="214" class="t">IP camera</text>
-  <text x="532" y="234" class="w">802.3af · 3–6 W</text>
+  <text x="532" y="211" class="t">IP camera</text>
+  <text x="532" y="227" class="lbl">192.168.10.2 (DHCP reservation)</text>
+  <text x="532" y="243" class="w">802.3af · 3–6 W</text>
 
   <!-- GPIO control to relay -->
   <path d="M780,400 V182 H660 V167" class="ctl" marker-end="url(#arP)"/>
@@ -131,7 +135,22 @@
   <rect x="230" y="610" width="170" height="90" rx="10" class="box"/>
   <text x="244" y="636" class="t">Cube Orange+</text>
   <text x="244" y="656" class="s">ArduPilot Rover</text>
-  <text x="244" y="684" class="w">~1.5–2.5 W</text>
+  <text x="244" y="672" class="lbl">TELEM1 = GPS1 (SBF)</text>
+  <text x="244" y="690" class="w">~1.5–2.5 W</text>
+
+  <!-- GNSS RTK + heading receiver on TELEM1 -->
+  <rect x="20" y="488" width="200" height="100" rx="10" class="key"/>
+  <text x="32" y="510" class="t">GNSS RTK + heading</text>
+  <text x="32" y="528" class="s">ArduSimple simpleRTK3B</text>
+  <text x="32" y="544" class="s">Septentrio mosaic-H</text>
+  <text x="32" y="562" class="lbl">2 antennas: position + true yaw</text>
+  <text x="32" y="578" class="lbl">USB: skynet config_gps</text>
+  <path d="M220,500 L246,480" class="wifi"/>
+  <text x="250" y="478" class="lbl">GNSS sats</text>
+  <path d="M228,632 H140 V591" class="dat" marker-end="url(#arB)"/>
+  <text x="146" y="626" class="lbl">RTCM → COM1</text>
+  <path d="M80,588 V672 H228" class="dat" marker-end="url(#arB)"/>
+  <text x="86" y="666" class="lbl">COM3 → SBF, 230400 Bd</text>
 
   <!-- Pi <-> Cube MAVLink -->
   <path d="M800,560 V655 H402" class="dat" marker-end="url(#arB)"/>
@@ -160,7 +179,7 @@
   <text x="851" y="614" font-size="14" font-weight="700" fill="#14532d">Power budget (at battery, incl. losses)</text>
   <text x="851" y="638" class="s">Starlink Mini</text><text x="1185" y="638" class="s" text-anchor="end">25–40 W</text>
   <text x="851" y="656" class="s">IP camera + PoE injector</text><text x="1185" y="656" class="s" text-anchor="end">4–7 W</text>
-  <text x="851" y="674" class="s">Pi 5 + buck + USB GbE</text><text x="1185" y="674" class="s" text-anchor="end">4–9 W</text>
+  <text x="851" y="674" class="s">Pi 5 + buck + USB Ethernet</text><text x="1185" y="674" class="s" text-anchor="end">4–9 W</text>
   <text x="851" y="692" class="s">Cube Orange+ via PM02</text><text x="1185" y="692" class="s" text-anchor="end">1.5–2.5 W</text>
   <line x1="851" y1="702" x2="1185" y2="702" stroke="#86efac"/>
   <text x="851" y="722" font-size="13" font-weight="700" fill="#0f172a">Starlink mode</text><text x="1185" y="722" font-size="13" font-weight="700" fill="#0f172a" text-anchor="end">~35–58 W</text>

@@ -309,6 +309,14 @@ class TestProvisioningEndpoints:
 
 class TestConnectWifi:
     @respx.mock
+    def test_set_hotspot(self, client):
+        route = respx.post(f"{BASE_URL}/wifi-manager/v1.0/hotspot").mock(
+            return_value=httpx.Response(200, json=True)
+        )
+        assert client.set_hotspot(True) is True
+        assert route.calls.last.request.url.params["enable"] == "true"
+
+    @respx.mock
     def test_connect_wifi_body(self, client):
         route = respx.post(f"{BASE_URL}/wifi-manager/v1.0/connect").mock(
             return_value=httpx.Response(200, json=None)

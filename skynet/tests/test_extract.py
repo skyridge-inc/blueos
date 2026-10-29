@@ -317,3 +317,59 @@ class TestFetchDhcpReservations:
         client = MagicMock()
         client.run_host_command.return_value = None
         assert fetch_dhcp_reservations(client) is None
+
+
+class TestAutopilotBase:
+    def test_default_base_path_is_sibling(self, tmp_path):
+        from skynet.extract import default_base_path
+
+        assert default_base_path(tmp_path / "sky1.yaml") == tmp_path / "autopilot_base.yaml"
+
+    def test_load_base(self, tmp_path):
+        from skynet.extract import load_autopilot_base
+
+        path = tmp_path / "autopilot_base.yaml"
+        path.write_text("autopilot_params:\n  CRUISE_SPEED: 2.0\n")
+        assert load_autopilot_base(path) == {"CRUISE_SPEED": 2.0}
+
+    def test_load_base_null_section(self, tmp_path):
+        from skynet.extract import load_autopilot_base
+
+        path = tmp_path / "autopilot_base.yaml"
+        path.write_text("autopilot_params:\n")
+        assert load_autopilot_base(path) == {}
+
+    def test_load_base_bad_shape_raises(self, tmp_path):
+        from skynet.extract import load_autopilot_base
+
+        path = tmp_path / "autopilot_base.yaml"
+        path.write_text("autopilot_params:\n  - CRUISE_SPEED\n")
+        with pytest.raises(ParamFileError):
+            load_autopilot_base(path)
+
+    def test_merge_rover_overrides_and_adds(self):
+        from skynet.extract import merge_autopilot_params
+
+        merged = merge_autopilot_params(
+            {"CRUISE_SPEED": 2.0, "WP_RADIUS": 3.0},
+            {"WP_RADIUS": 1.5, "GPS1_TYPE": 26.0},
+        )
+        assert merged == {"CRUISE_SPEED": 2.0, "GPS1_TYPE": 26.0, "WP_RADIUS": 1.5}
+        assert list(merged) == sorted(merged)
+
+    def test_merge_null_rover_section(self):
+        from skynet.extract import merge_autopilot_params
+
+        assert merge_autopilot_params({"CRUISE_SPEED": 2.0}, None) == {"CRUISE_SPEED": 2.0}
+
+    def test_diff_from_base(self):
+        from skynet.extract import params_diff_from_base
+
+        base = {"CRUISE_SPEED": 2.0, "WP_RADIUS": 3.0, "TURN_RADIUS": 0.9}
+        params = {
+            "CRUISE_SPEED": 2.0,               # same
+            "TURN_RADIUS": 0.8999999761581421,  # float32 round-trip, within epsilon
+            "WP_RADIUS": 1.5,                  # changed
+            "GPS1_TYPE": 26.0,                 # not in base
+        }
+        assert params_diff_from_base(params, base) == {"GPS1_TYPE": 26.0, "WP_RADIUS": 1.5}

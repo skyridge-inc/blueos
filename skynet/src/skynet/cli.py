@@ -40,7 +40,7 @@ nav_app = typer.Typer(
     help="Navigation and mission planning.",
     no_args_is_help=True,
 )
-app.add_typer(config_app, name="config_blueos")
+app.add_typer(config_app, name="config")
 app.add_typer(gps_config_app, name="config_gps")
 app.add_typer(pixhawk_app, name="pixhawk")
 app.add_typer(nav_app, name="nav")
@@ -64,6 +64,13 @@ BaudOption = Annotated[
 CalibrationOption = Annotated[
     bool,
     typer.Option("--include-calibration", help="Include calibration parameters."),
+]
+BaseOption = Annotated[
+    Optional[Path],
+    typer.Option(
+        "--base",
+        help="Fleet-wide autopilot params YAML. Default: autopilot_base.yaml next to the rover YAML.",
+    ),
 ]
 
 DEFAULT_DEVICE = "/dev/ttyACM0"
@@ -460,10 +467,15 @@ def extract_config_cmd(
 
 
 MAVLINK_PORT = 5760
+CONFIG_DIR = "config"  # `config download` always writes rover YAMLs here
 
 
 def _ethernet_addresses(network: dict[str, Any], mode: str) -> list[tuple[str, str]]:
-    """(interface, ip) pairs from network.ethernet whose address mode matches."""
+    """(interface, ip) pairs from network.ethernet whose address mode matches.
+
+    Upload only asks for "unmanaged" and "server"; DHCP-client leases
+    ("client") are dynamic and never applied.
+    """
     return [
         (iface.get("name", ""), addr.get("ip", ""))
         for iface in (network.get("ethernet") or [])
@@ -519,6 +531,64 @@ def _apply_dhcp_reservations(client: Any, reservations: list[dict[str, Any]]) ->
     return changed or "changed" in (result.get("stdout") or "").split()
 
 
+def _wifi_profile_spec(entry: dict[str, Any]) -> dict[str, str]:
+    """The interface/band pins a ``wifi_saved`` YAML entry asks for."""
+    from .host_config import WIFI_PROFILE_KEYS
+
+    return {k: str(entry[k]) for k in WIFI_PROFILE_KEYS if entry.get(k)}
+
+
+def _describe_wifi(ssid: str, spec: dict[str, str]) -> str:
+    from .host_config import WIFI_BANDS
+
+    pins = [spec["interface"]] if "interface" in spec else []
+    if "band" in spec:
+        pins.append(WIFI_BANDS.get(spec["band"], spec["band"]))
+    return f"{ssid} ({', '.join(pins)})" if pins else ssid
+
+
+def _apply_wifi_profile(client: Any, ssid: str, spec: dict[str, str]) -> bool | None:
+    """Pin a host WiFi profile to an interface/band, reconnecting it if changed.
+
+    Returns True if changed, False if already pinned, or None on failure
+    (profile missing, or it would not connect with the new settings).
+    """
+    from .host_config import parse_wifi_profile, wifi_profile_get_command, wifi_profile_set_command
+
+    current = client.run_host_command(wifi_profile_get_command(ssid))
+    if not isinstance(current, dict) or current.get("return_code") != 0:
+        return None
+    have = parse_wifi_profile(current.get("stdout") or "")
+    if all(have.get(k) == v for k, v in spec.items()):
+        return False
+    result = client.run_host_command(wifi_profile_set_command(ssid, spec))
+    if not isinstance(result, dict) or result.get("return_code") != 0:
+        return None
+    return True
+
+
+def _load_base_params(base: Path | None, rover_yaml: Path) -> tuple[Path | None, dict[str, float]]:
+    """Load the autopilot base for a rover YAML.
+
+    An explicit --base must exist; the default sibling file is optional.
+    Returns (path, params), with path None when no base is in use.
+    """
+    from .exceptions import ParamFileError
+    from .extract import default_base_path, load_autopilot_base
+
+    path = base or default_base_path(rover_yaml)
+    if not path.is_file():
+        if base is not None:
+            err_console.print(f"[red]Autopilot base not found: {base}[/red]")
+            raise typer.Exit(1)
+        return None, {}
+    try:
+        return path, load_autopilot_base(path)
+    except ParamFileError as e:
+        err_console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+
+
 @config_app.command()
 def download(
     host: Annotated[
@@ -526,24 +596,50 @@ def download(
         typer.Argument(help="BlueOS IP or hostname (e.g., 192.168.2.2 or blueos.local)."),
     ],
     output: Annotated[
-        Optional[Path],
-        typer.Option("--output", "-o", help="Output YAML file path. Default: <host>.yaml"),
+        Optional[str],
+        typer.Option(
+            "--output", "-o",
+            help=f"Output file name, written in ./{CONFIG_DIR}/. Default: <device hostname>.yaml",
+        ),
     ] = None,
     include_calibration: CalibrationOption = False,
+    base: BaseOption = None,
     timeout: Annotated[
         float,
         typer.Option("--timeout", "-t", help="HTTP request timeout in seconds."),
     ] = 10.0,
 ) -> None:
-    """Download BlueOS configuration and autopilot parameters to YAML."""
+    """Download BlueOS configuration and autopilot parameters to ./config/<host>.yaml.
+
+    Only autopilot params that differ from the autopilot base are written,
+    and only when the autopilot responds; otherwise the file keeps its
+    existing autopilot_params. The autopilot base itself is never written.
+    """
     import httpx as _httpx
 
     from .blueos_api import BlueOSClient
-    from .exceptions import BlueOSConnectionError, MowerProvisionerError
-    from .extract import extract_config, fetch_mediamtx_config, save_yaml
+    from .exceptions import BlueOSConnectionError, MowerProvisionerError, ParamFileError
+    from .extract import (
+        AUTOPILOT_BASE_FILENAME,
+        extract_config,
+        fetch_mediamtx_config,
+        load_yaml,
+        output_filename,
+        params_diff_from_base,
+        save_yaml,
+    )
 
     url = f"http://{host}" if not host.startswith("http") else host
-    out_path = output or Path(f"{host}.yaml")
+    if output is not None:
+        out_name = Path(output)
+        if out_name.parent not in (Path("."), Path(CONFIG_DIR)):
+            err_console.print(
+                f"[red]--output is a file name; download always writes to ./{CONFIG_DIR}/[/red]"
+            )
+            raise typer.Exit(1)
+        if out_name.name == AUTOPILOT_BASE_FILENAME:
+            err_console.print(f"[red]download never writes {AUTOPILOT_BASE_FILENAME}[/red]")
+            raise typer.Exit(1)
 
     # 1. Fetch BlueOS configuration + MediaMTX config over HTTP
     with BlueOSClient(url, timeout=_httpx.Timeout(timeout, read=timeout * 3)) as client:
@@ -555,6 +651,14 @@ def download(
         except BlueOSConnectionError as e:
             err_console.print(f"[red]{e}[/red]")
             raise typer.Exit(1)
+
+    if output is not None:
+        out_path = Path(CONFIG_DIR) / Path(output).name
+    elif config.get("hostname"):
+        out_path = Path(CONFIG_DIR) / f"{config['hostname']}.yaml"
+    else:
+        out_path = Path(CONFIG_DIR) / output_filename(url)
+    base_path, base_params = _load_base_params(base, out_path)
 
     # 2. Fetch autopilot parameters over MAVLink TCP
     params: dict[str, float] = {}
@@ -581,9 +685,18 @@ def download(
     if params:
         if not include_calibration:
             params = {k: v for k, v in params.items() if k not in CALIBRATION_PARAMS}
-        config["autopilot_params"] = dict(sorted(params.items()))
+        if base_path is not None:
+            config["autopilot_params"] = params_diff_from_base(params, base_params)
+        else:
+            config["autopilot_params"] = dict(sorted(params.items()))
     else:
-        config["autopilot_params"] = None
+        # Autopilot offline: keep the file's own params rather than wiping them.
+        try:
+            existing = load_yaml(out_path) if out_path.is_file() else {}
+        except ParamFileError:
+            existing = {}
+        if "autopilot_params" in existing:
+            config["autopilot_params"] = existing["autopilot_params"]
 
     # 4. Save
     save_yaml(config, out_path)
@@ -592,10 +705,20 @@ def download(
     mediamtx = config.get("mediamtx")
     console.print(f"[green]Downloaded to {out_path}[/green]")
     console.print(f"  BlueOS extensions: {ext_count}")
-    if params:
+    if params and base_path is not None:
+        console.print(
+            f"  Autopilot parameters: {len(params)} read, "
+            f"{len(config['autopilot_params'])} differ from {base_path}"
+        )
+    elif params:
         console.print(f"  Autopilot parameters: {len(params)}")
+    elif "autopilot_params" in config:
+        err_console.print(
+            "  Autopilot parameters: [yellow]autopilot not responding — "
+            f"kept existing autopilot_params in {out_path}[/yellow]"
+        )
     else:
-        err_console.print("  Autopilot parameters: [yellow]unavailable[/yellow]")
+        err_console.print("  Autopilot parameters: [yellow]autopilot not responding — none written[/yellow]")
     if mediamtx:
         console.print(f"  MediaMTX config: {mediamtx['config_path']}")
     else:
@@ -617,6 +740,7 @@ def upload(
         typer.Argument(help="Path to YAML configuration file."),
     ],
     include_calibration: CalibrationOption = False,
+    base: BaseOption = None,
     dry_run: Annotated[
         bool,
         typer.Option("--dry-run", help="Show what would be uploaded without making changes."),
@@ -630,15 +754,20 @@ def upload(
         typer.Option("--timeout", "-t", help="HTTP request timeout in seconds."),
     ] = 10.0,
 ) -> None:
-    """Upload configuration and autopilot parameters from YAML to BlueOS device."""
+    """Upload configuration and autopilot parameters from YAML to BlueOS device.
+
+    Autopilot params are the autopilot base with the YAML's own
+    autopilot_params applied on top.
+    """
     import httpx as _httpx
 
     from .blueos_api import BlueOSClient
     from .exceptions import BlueOSConnectionError, MowerProvisionerError
-    from .extract import load_yaml, push_mediamtx_config
-    from .host_config import DNSMASQ_HOST_PATH
+    from .extract import load_yaml, merge_autopilot_params, push_mediamtx_config
+    from .host_config import DNSMASQ_HOST_PATH, WIFI_BANDS
 
     config = load_yaml(config_file)
+    base_path, base_params = _load_base_params(base, config_file)
 
     # Summarize what will be uploaded
     changes: list[str] = []
@@ -673,26 +802,53 @@ def upload(
             "  DHCP servers: "
             + ", ".join(f"{iface} ({ip})" for iface, ip in dhcp_servers)
         )
-    wifi_ssids = [
-        str(w["ssid"]) for w in (network.get("wifi_saved") or [])
+    wifi_entries = [
+        w for w in (network.get("wifi_saved") or [])
         if isinstance(w, dict) and w.get("ssid")
     ]
+    wifi_ssids = [str(w["ssid"]) for w in wifi_entries]
+    wifi_profiles = [
+        (str(w["ssid"]), spec) for w in wifi_entries if (spec := _wifi_profile_spec(w))
+    ]
+    bad_bands = [s for s, spec in wifi_profiles if spec.get("band", "bg") not in WIFI_BANDS]
+    if bad_bands:
+        err_console.print(
+            f"[red]Invalid WiFi band for {', '.join(bad_bands)} — use "
+            + " or ".join(f"'{b}' ({name})" for b, name in WIFI_BANDS.items())
+            + ".[/red]"
+        )
+        raise typer.Exit(1)
     if wifi_ssids:
         changes.append(
-            f"  WiFi networks: {', '.join(wifi_ssids)} "
-            "(password prompted for any not already saved on the device)"
+            "  WiFi networks: "
+            + ", ".join(_describe_wifi(str(w["ssid"]), _wifi_profile_spec(w)) for w in wifi_entries)
+            + " (password prompted for any not already saved on the device)"
         )
+    hotspot = network.get("hotspot")
+    if isinstance(hotspot, bool):
+        changes.append(f"  Hotspot: {'on' if hotspot else 'off'}")
     reservations = network.get("dhcp_reservations")
     if isinstance(reservations, list):
         changes.append(
             f"  DHCP reservations: {len(reservations)} "
             f"(writes {DNSMASQ_HOST_PATH}; host reboots if changed)"
         )
-    params = config.get("autopilot_params")
-    if params and isinstance(params, dict):
+    rover_params = config.get("autopilot_params")
+    if not isinstance(rover_params, dict):
+        rover_params = {}
+    params = merge_autopilot_params(base_params, rover_params)
+    if params:
         if not include_calibration:
             params = {k: v for k, v in params.items() if k not in CALIBRATION_PARAMS}
-        changes.append(f"  Autopilot parameters: {len(params)}")
+        if base_path is not None:
+            overrides = sum(1 for k in rover_params if k in base_params)
+            changes.append(
+                f"  Autopilot parameters: {len(params)} "
+                f"(base {len(base_params)}, rover overrides {overrides}, "
+                f"added {len(rover_params) - overrides})"
+            )
+        else:
+            changes.append(f"  Autopilot parameters: {len(params)}")
 
     if not changes:
         console.print("[yellow]Nothing to upload — YAML has no writable sections.[/yellow]")
@@ -711,7 +867,8 @@ def upload(
         if params:
             console.print("\n[bold]Parameters:[/bold]")
             for name in sorted(params):
-                console.print(f"  {name} = {params[name]}")
+                source = " (rover)" if base_path is not None and name in rover_params else ""
+                console.print(f"  {name} = {params[name]}{source}")
         return
 
     if not yes:
@@ -863,8 +1020,8 @@ def upload(
             err_console.print(f"[yellow]Warning: Could not write autopilot params: {e}[/yellow]")
 
     # 3. WiFi last — joining a network switches wlan0 and may drop this session
-    if wifi_credentials:
-        with BlueOSClient(url, timeout=_httpx.Timeout(timeout)) as client:
+    if wifi_credentials or wifi_profiles or isinstance(hotspot, bool):
+        with BlueOSClient(url, timeout=_httpx.Timeout(timeout, read=timeout * 3)) as client:
             wifi_ok = 0
             for ssid, password in wifi_credentials:
                 try:
@@ -882,6 +1039,37 @@ def upload(
                     )
             if wifi_ok:
                 uploaded.append(f"WiFi ({wifi_ok})")
+
+            # BlueOS saves profiles on wlan0; move them to their own adapter/band
+            pinned = 0
+            for ssid, spec in wifi_profiles:
+                try:
+                    with console.status(f"Pinning WiFi '{_describe_wifi(ssid, spec)}'..."):
+                        changed = _apply_wifi_profile(client, ssid, spec)
+                except BlueOSConnectionError:
+                    changed = None
+                if changed is None:
+                    err_console.print(
+                        f"[yellow]Warning: Could not pin WiFi '{_describe_wifi(ssid, spec)}' — "
+                        "profile not saved on the device, adapter missing, or no connection "
+                        "on that band.[/yellow]"
+                    )
+                else:
+                    pinned += 1
+            if pinned:
+                uploaded.append(f"WiFi pins ({pinned})")
+
+            # Hotspot after the pins so it can take over the radio they freed
+            if isinstance(hotspot, bool):
+                try:
+                    current_hotspot = client.get_hotspot()
+                    ok = current_hotspot == hotspot or client.set_hotspot(hotspot)
+                except BlueOSConnectionError:
+                    ok = False
+                if ok:
+                    uploaded.append(f"hotspot ({'on' if hotspot else 'off'})")
+                else:
+                    err_console.print("[yellow]Warning: Failed to set hotspot[/yellow]")
 
     console.print(f"[green]Upload complete: {', '.join(uploaded) or 'no changes needed'}[/green]")
 

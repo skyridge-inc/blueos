@@ -86,3 +86,46 @@ def ensure_bind_command() -> str:
     ``unchanged`` on stdout.
     """
     return f"sudo python3 -c {shlex.quote(_ENSURE_BIND_SCRIPT)}"
+
+
+# -- WiFi client profiles (NetworkManager on the host) --
+#
+# BlueOS wifi-manager creates every client profile pinned to wlan0, the
+# radio its hotspot (uap0) also lives on. With a second (USB) WiFi adapter
+# a profile can be re-pinned to that adapter and, optionally, one band, so
+# the built-in radio is left to the hotspot.
+
+# NetworkManager 802-11-wireless.band values.
+WIFI_BANDS = {"bg": "2.4 GHz", "a": "5 GHz"}
+WIFI_PROFILE_KEYS = ("interface", "band")
+
+
+def wifi_profile_get_command(ssid: str) -> str:
+    """Shell command printing a profile's interface and band, one per line."""
+    return (
+        "sudo nmcli -g connection.interface-name,802-11-wireless.band "
+        f"connection show id {shlex.quote(ssid)}"
+    )
+
+
+def parse_wifi_profile(text: str) -> dict[str, str]:
+    """Parse ``wifi_profile_get_command`` output; unset fields are omitted."""
+    values = [line.strip() for line in text.splitlines()]
+    return {key: value for key, value in zip(WIFI_PROFILE_KEYS, values) if value}
+
+
+def wifi_profile_set_command(ssid: str, profile: dict[str, str]) -> str:
+    """Shell command that applies interface/band to a profile and reconnects it.
+
+    Only keys present in ``profile`` are changed. The profile is brought
+    up again so the new interface/band take effect immediately.
+    """
+    nm_keys = {"interface": "connection.interface-name", "band": "802-11-wireless.band"}
+    settings = " ".join(
+        f"{nm_keys[k]} {shlex.quote(profile[k])}" for k in WIFI_PROFILE_KEYS if k in profile
+    )
+    q = shlex.quote(ssid)
+    return (
+        f"sudo nmcli connection modify id {q} {settings} && "
+        f"sudo nmcli --wait 20 connection up id {q}"
+    )

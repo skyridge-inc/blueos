@@ -61,26 +61,81 @@ with `skynet pixhawk write <sidecar> --yes --include-calibration`.
 | `sync FILE` | Smart sync — write only changed/added params |
 | `backup` | Full backup to timestamped file |
 
-### BlueOS host provisioning (`skynet config_blueos`)
+### BlueOS host provisioning (`skynet config`)
 
 | Command | Description |
 |---------|-------------|
-| `config_blueos download HOST` | Snapshot a BlueOS host to YAML (identity, extensions, bag, network, DHCP reservations, MediaMTX config, autopilot params) |
-| `config_blueos upload HOST FILE` | Provision a BlueOS host from that YAML |
+| `config download HOST [-o NAME]` | Snapshot a BlueOS host to `./config/<hostname>.yaml` (identity, extensions, bag, network, WiFi pins, hotspot, DHCP reservations, MediaMTX config, autopilot params that differ from `autopilot_base.yaml`) |
+| `config upload HOST FILE` | Provision a BlueOS host from that YAML |
 
-`config_blueos upload` applies, in order:
+`config download` always writes into `./config/` (run it from `skynet/`). The file is named
+after the device's BlueOS hostname, e.g. `config/sky1.yaml`, unless `-o NAME` gives another file
+name. It never writes `autopilot_base.yaml`. Each download rewrites the whole file, so YAML
+comments are not kept. It never records DHCP-client leases (`mode: client`, e.g. eth0 behind
+Starlink): those addresses are always dynamic. Reach a rover by its NetBird name
+(`<host>.netbird.cloud`) instead.
+
+`config upload` applies, in order:
 
 1. Hostname, vehicle name, bag entries
 2. **Extensions** — installs any `extensions:` entry whose identifier/tag is not already installed
 3. MediaMTX config file
 4. `network.ethernet` addresses — `mode: unmanaged` → static IP; `mode: server` → BlueOS DHCP server on that interface (leases `.101`–`.200`)
 5. **`network.dhcp_reservations`** — writes `/etc/blueos/dnsmasq.conf` on the host and bind-mounts it over `/etc/dnsmasq.conf` in `blueos-core` (via `/root/.config/blueos/bootstrap/startup.json`, backed up first)
-6. Autopilot parameters over MAVLink (`tcp:HOST:5760`)
+6. Autopilot parameters over MAVLink (`tcp:HOST:5760`): the fleet base plus the YAML's own
+   `autopilot_params` (see below)
 7. **WiFi** — for each `network.wifi_saved` SSID not already saved on the device, prompts for the
    password (hidden, entered twice; blank skips) at the start of the run, then connects at the end.
    Passwords are never written to the YAML. Joining a new network switches `wlan0` immediately, so a
    device reached over a different WiFi may drop off until it reappears on the new network.
-8. **Reboot** — if step 5 changed anything, the host reboots so `blueos-core` is recreated with the bind mount
+   Entries with `interface` and/or `band` are then pinned in the host's NetworkManager profile and
+   reconnected (see below).
+8. **Hotspot** — `network.hotspot: true|false` turns the BlueOS hotspot on or off (saved by BlueOS)
+9. **Reboot** — if step 5 changed anything, the host reboots so `blueos-core` is recreated with the bind mount
+
+#### Autopilot params: fleet base + per-rover overrides
+
+`config/autopilot_base.yaml` holds the ArduPilot params shared by the whole fleet. A rover YAML's
+`autopilot_params` only lists what differs for that rover — usually nothing:
+
+```yaml
+# config/sky2.yaml
+autopilot_params:
+  GPS1_TYPE: 5        # overrides the base value
+  SERIAL4_BAUD: 230   # not in the base: added
+```
+
+- **upload** loads `autopilot_base.yaml` from the rover YAML's directory, applies the rover's
+  `autopilot_params` on top (rover wins), then filters calibration params as usual. `--dry-run`
+  marks rover-sourced values with `(rover)`.
+- **download** writes only params that differ from `config/autopilot_base.yaml`, or are missing
+  from it, so a re-download shows the rover's real differences. Without a base file it writes
+  every param. It updates `autopilot_params` only when the autopilot responds. If the Pixhawk is
+  offline, the file keeps its existing `autopilot_params`, and a new file gets none.
+- `--base PATH` picks a different base file. With no base file, both commands behave as before.
+
+To change a param for the whole fleet, edit `autopilot_base.yaml`. Calibration params
+(`CALIBRATION_PARAMS`) are vehicle-specific and don't belong in the base.
+
+#### Second WiFi adapter: hotspot on the built-in radio, client on USB
+
+BlueOS's wifi-manager runs its hotspot (`uap0`) on the first WiFi radio — the Pi's built-in
+`wlan0` — and saves every client network pinned to `wlan0`. On one radio the two fight over the
+channel. With a USB WiFi adapter (`wlan1`), pin the client network to it:
+
+```yaml
+network:
+  wifi_saved:
+  - ssid: '007'
+    interface: wlan1   # NetworkManager connection.interface-name
+    band: bg           # bg = 2.4 GHz only (longer range), a = 5 GHz only; omit for either
+  hotspot: true        # BlueOS hotspot stays on wlan0
+```
+
+`config download` records `interface`/`band` from the host profile. Upload only changes
+the keys that are present. The BlueOS WiFi page reports `wlan0` only, so it shows the client as
+disconnected, and connecting a pinned network from that page will fail — use
+`config upload` (or `nmcli`) instead.
 
 ```yaml
 network:

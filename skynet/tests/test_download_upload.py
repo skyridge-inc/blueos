@@ -16,6 +16,12 @@ from skynet.exceptions import MowerProvisionerError
 runner = CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def _in_tmp_cwd(tmp_path, monkeypatch):
+    """`config download` always writes to ./config, so run each test from tmp_path."""
+    monkeypatch.chdir(tmp_path)
+
+
 def _make_param_msg(name: str, value: float, index: int, count: int):
     msg = MagicMock()
     msg.param_id = name.encode("utf-8")
@@ -67,8 +73,8 @@ class TestDownload:
             _make_param_msg("WP_RADIUS", 3.0, 1, 2),
         ])
 
-        out = tmp_path / "test.yaml"
-        result = runner.invoke(app, ["config_blueos", "download", "192.168.2.2", "-o", str(out)])
+        out = tmp_path / "config" / "test.yaml"
+        result = runner.invoke(app, ["config", "download", "192.168.2.2", "-o", out.name])
         assert result.exit_code == 0, result.output
 
         data = yaml.safe_load(out.read_text())
@@ -87,8 +93,8 @@ class TestDownload:
             _make_param_msg(cal_param, 0.5, 1, 2),
         ])
 
-        out = tmp_path / "test.yaml"
-        result = runner.invoke(app, ["config_blueos", "download", "192.168.2.2", "-o", str(out)])
+        out = tmp_path / "config" / "test.yaml"
+        result = runner.invoke(app, ["config", "download", "192.168.2.2", "-o", out.name])
         assert result.exit_code == 0, result.output
 
         data = yaml.safe_load(out.read_text())
@@ -105,9 +111,9 @@ class TestDownload:
             _make_param_msg(cal_param, 0.5, 1, 2),
         ])
 
-        out = tmp_path / "test.yaml"
+        out = tmp_path / "config" / "test.yaml"
         result = runner.invoke(
-            app, ["config_blueos", "download", "192.168.2.2", "-o", str(out), "--include-calibration"]
+            app, ["config", "download", "192.168.2.2", "-o", out.name, "--include-calibration"]
         )
         assert result.exit_code == 0, result.output
 
@@ -123,9 +129,9 @@ class TestDownload:
             _make_param_msg("CRUISE_SPEED", 2.0, 0, 1),
         ])
 
-        result = runner.invoke(app, ["config_blueos", "download", "blueos.local"])
+        result = runner.invoke(app, ["config", "download", "blueos.local"])
         assert result.exit_code == 0, result.output
-        assert (tmp_path / "blueos.local.yaml").exists()
+        assert (tmp_path / "config" / "blueos.yaml").exists()
 
     @patch("skynet.cli.mavlink_connection")
     @patch("skynet.blueos_api.BlueOSClient")
@@ -137,8 +143,8 @@ class TestDownload:
             _make_param_msg("MMM_PARAM", 5.0, 2, 3),
         ])
 
-        out = tmp_path / "test.yaml"
-        result = runner.invoke(app, ["config_blueos", "download", "192.168.2.2", "-o", str(out)])
+        out = tmp_path / "config" / "test.yaml"
+        result = runner.invoke(app, ["config", "download", "192.168.2.2", "-o", out.name])
         assert result.exit_code == 0, result.output
 
         data = yaml.safe_load(out.read_text())
@@ -153,8 +159,8 @@ class TestDownload:
             _make_param_msg("CRUISE_SPEED", 2.0, 0, 1),
         ])
 
-        out = tmp_path / "test.yaml"
-        result = runner.invoke(app, ["config_blueos", "download", "192.168.2.2", "-o", str(out)])
+        out = tmp_path / "config" / "test.yaml"
+        result = runner.invoke(app, ["config", "download", "192.168.2.2", "-o", out.name])
         assert result.exit_code == 0, result.output
 
         data = yaml.safe_load(out.read_text())
@@ -172,8 +178,8 @@ class TestDownload:
             _make_param_msg("CRUISE_SPEED", 2.0, 0, 1),
         ])
 
-        out = tmp_path / "test.yaml"
-        result = runner.invoke(app, ["config_blueos", "download", "192.168.2.2", "-o", str(out)])
+        out = tmp_path / "config" / "test.yaml"
+        result = runner.invoke(app, ["config", "download", "192.168.2.2", "-o", out.name])
         assert result.exit_code == 0, result.output
 
         data = yaml.safe_load(out.read_text())
@@ -211,7 +217,7 @@ class TestUpload:
         cfg = tmp_path / "config.yaml"
         self._write_config(cfg, params={"CRUISE_SPEED": 2.0, "WP_RADIUS": 3.0})
 
-        result = runner.invoke(app, ["config_blueos", "upload", "192.168.2.2", str(cfg), "-y"])
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
         assert result.exit_code == 0, result.output
 
         mock_client.set_hostname.assert_called_once_with("mower-01")
@@ -227,15 +233,15 @@ class TestUpload:
         cfg = tmp_path / "config.yaml"
         self._write_config(cfg, params={"CRUISE_SPEED": 2.0})
 
-        result = runner.invoke(app, ["config_blueos", "upload", "192.168.2.2", str(cfg), "--dry-run"])
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "--dry-run"])
         assert result.exit_code == 0, result.output
         assert "DRY RUN" in result.output
 
     def test_empty_config(self, tmp_path):
         cfg = tmp_path / "empty.yaml"
-        cfg.write_text(yaml.dump({"network": {"hotspot": True}}))
+        cfg.write_text(yaml.dump({"network": {"hotspot": None, "ethernet": []}}))
 
-        result = runner.invoke(app, ["config_blueos", "upload", "192.168.2.2", str(cfg)])
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg)])
         assert result.exit_code == 0
         assert "Nothing to upload" in result.output
 
@@ -254,7 +260,7 @@ class TestUpload:
         cfg = tmp_path / "config.yaml"
         self._write_config(cfg, params={"CRUISE_SPEED": 2.0, cal_param: 0.5})
 
-        result = runner.invoke(app, ["config_blueos", "upload", "192.168.2.2", str(cfg), "-y"])
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
         assert result.exit_code == 0, result.output
 
         call_params = mock_write.call_args[0][1]
@@ -277,7 +283,7 @@ class TestUpload:
         cfg = tmp_path / "config.yaml"
         self._write_config(cfg, params={"CRUISE_SPEED": 2.0})
 
-        result = runner.invoke(app, ["config_blueos", "upload", "192.168.2.2", str(cfg), "-y"])
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
         assert result.exit_code == 0, result.output
         assert "Failed to set hostname" in result.output
 
@@ -300,7 +306,7 @@ class TestUpload:
             bag={"ext.cam": {"res": "1080p"}, "ext.gps": {"rate": 10}},
         )
 
-        result = runner.invoke(app, ["config_blueos", "upload", "192.168.2.2", str(cfg), "-y"])
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
         assert result.exit_code == 0, result.output
         assert mock_client.set_bag.call_count == 2
 
@@ -329,7 +335,7 @@ class TestUpload:
         }
         cfg.write_text(yaml.dump(config))
 
-        result = runner.invoke(app, ["config_blueos", "upload", "192.168.2.2", str(cfg), "-y"])
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
         assert result.exit_code == 0, result.output
         assert "mediamtx config" in result.output
 
@@ -363,7 +369,7 @@ class TestUpload:
         }
         cfg.write_text(yaml.dump(config))
 
-        result = runner.invoke(app, ["config_blueos", "upload", "192.168.2.2", str(cfg), "-y"])
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
         assert result.exit_code == 0, result.output
         assert "Failed to push MediaMTX config" in result.output
 
@@ -396,7 +402,7 @@ class TestUploadProvisioning:
         mock_cls.return_value = client
         cfg = tmp_path / "config.yaml"
         cfg.write_text(yaml.dump(config))
-        return runner.invoke(app, ["config_blueos", "upload", "192.168.2.2", str(cfg), "-y", *extra])
+        return runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y", *extra])
 
     @patch("skynet.blueos_api.BlueOSClient")
     def test_installs_only_missing_extensions(self, mock_cls, tmp_path):
@@ -504,8 +510,8 @@ class TestDownloadReservations:
         mock_cls.return_value = client
         mock_mavlink.side_effect = MowerProvisionerError("no mav")
 
-        out = tmp_path / "out.yaml"
-        result = runner.invoke(app, ["config_blueos", "download", "192.168.2.2", "-o", str(out)])
+        out = tmp_path / "config" / "out.yaml"
+        result = runner.invoke(app, ["config", "download", "192.168.2.2", "-o", out.name])
         assert result.exit_code == 0, result.output
         data = yaml.safe_load(out.read_text())
         assert data["network"]["dhcp_reservations"] == [
@@ -525,7 +531,7 @@ class TestUploadWifi:
         cfg = tmp_path / "config.yaml"
         cfg.write_text(yaml.dump({"network": {"wifi_saved": [{"networkid": 0, "ssid": s} for s in ssids]}}))
         return runner.invoke(
-            app, ["config_blueos", "upload", "192.168.2.2", str(cfg), "-y", *extra], input=input,
+            app, ["config", "upload", "192.168.2.2", str(cfg), "-y", *extra], input=input,
         )
 
     @patch("skynet.blueos_api.BlueOSClient")
@@ -579,3 +585,323 @@ class TestUploadWifi:
         assert result.exit_code == 0, result.output
         assert "did not match" in result.output
         client.connect_wifi.assert_called_once_with("007", "final333")
+
+
+class TestWifiPinsAndHotspot:
+    """wifi_saved interface/band pins and the hotspot setting."""
+
+    ENTRY = {"ssid": "007", "interface": "wlan1", "band": "bg"}
+
+    def _client(self, profile_stdout: str | None = "wlan0\n\n", set_rc: int = 0, hotspot=False):
+        client = _mock_blueos_client()
+        client.get_wifi_saved.return_value = [{"networkid": 0, "ssid": "007"}]
+        client.get_hotspot.return_value = hotspot
+        client.set_hotspot.return_value = True
+
+        def run_host_command(cmd: str):
+            if "connection show" in cmd:
+                if profile_stdout is None:
+                    return {"stdout": "", "stderr": "no such connection profile", "return_code": 10}
+                return {"stdout": profile_stdout, "stderr": "", "return_code": 0}
+            if "connection modify" in cmd:
+                return {"stdout": "", "stderr": "", "return_code": set_rc}
+            return {"stdout": "", "stderr": "", "return_code": 0}
+
+        client.run_host_command.side_effect = run_host_command
+        return client
+
+    def _upload(self, mock_cls, client, tmp_path, network, *extra):
+        mock_cls.return_value = client
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(yaml.dump({"network": network}))
+        return runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y", *extra])
+
+    def _host_cmds(self, client):
+        return [c.args[0] for c in client.run_host_command.call_args_list]
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_pins_profile_to_interface_and_band(self, mock_cls, tmp_path):
+        client = self._client()
+        result = self._upload(mock_cls, client, tmp_path, {"wifi_saved": [self.ENTRY]})
+        assert result.exit_code == 0, result.output
+        modify = [c for c in self._host_cmds(client) if "connection modify" in c]
+        assert modify == [
+            "sudo nmcli connection modify id 007 connection.interface-name wlan1 "
+            "802-11-wireless.band bg && sudo nmcli --wait 20 connection up id 007"
+        ]
+        assert "WiFi pins (1)" in result.output
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_already_pinned_is_not_modified(self, mock_cls, tmp_path):
+        client = self._client(profile_stdout="wlan1\nbg\n")
+        result = self._upload(mock_cls, client, tmp_path, {"wifi_saved": [self.ENTRY]})
+        assert result.exit_code == 0, result.output
+        assert not any("connection modify" in c for c in self._host_cmds(client))
+        assert "WiFi pins (1)" in result.output
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_missing_profile_warns(self, mock_cls, tmp_path):
+        client = self._client(profile_stdout=None)
+        result = self._upload(mock_cls, client, tmp_path, {"wifi_saved": [self.ENTRY]})
+        assert result.exit_code == 0, result.output
+        assert "Could not pin WiFi '007 (wlan1, 2.4 GHz)'" in result.output
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_reconnect_failure_warns(self, mock_cls, tmp_path):
+        client = self._client(set_rc=4)
+        result = self._upload(mock_cls, client, tmp_path, {"wifi_saved": [self.ENTRY]})
+        assert result.exit_code == 0, result.output
+        assert "Could not pin WiFi" in result.output
+        assert "WiFi pins" not in result.output
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_entry_without_pins_runs_no_host_commands(self, mock_cls, tmp_path):
+        client = self._client()
+        result = self._upload(mock_cls, client, tmp_path, {"wifi_saved": [{"ssid": "007"}]})
+        assert result.exit_code == 0, result.output
+        client.run_host_command.assert_not_called()
+
+    def test_invalid_band_rejected_before_changes(self, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(yaml.dump({"network": {"wifi_saved": [{"ssid": "007", "band": "2.4"}]}}))
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
+        assert result.exit_code == 1
+        assert "Invalid WiFi band" in result.output
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_enables_hotspot_when_off(self, mock_cls, tmp_path):
+        client = self._client(hotspot=False)
+        result = self._upload(mock_cls, client, tmp_path, {"hotspot": True})
+        assert result.exit_code == 0, result.output
+        client.set_hotspot.assert_called_once_with(True)
+        assert "hotspot (on)" in result.output
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_hotspot_already_matching_not_set(self, mock_cls, tmp_path):
+        client = self._client(hotspot=True)
+        result = self._upload(mock_cls, client, tmp_path, {"hotspot": True})
+        assert result.exit_code == 0, result.output
+        client.set_hotspot.assert_not_called()
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_hotspot_set_after_pins(self, mock_cls, tmp_path):
+        client = self._client()
+        order: list[str] = []
+        client.run_host_command.side_effect = (
+            lambda cmd, inner=client.run_host_command.side_effect: (order.append("pin"), inner(cmd))[1]
+        )
+        client.set_hotspot.side_effect = lambda enable: (order.append("hotspot"), True)[1]
+        result = self._upload(mock_cls, client, tmp_path, {"wifi_saved": [self.ENTRY], "hotspot": True})
+        assert result.exit_code == 0, result.output
+        assert order[-1] == "hotspot" and "pin" in order
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_dry_run_shows_pins_and_hotspot(self, mock_cls, tmp_path):
+        client = self._client()
+        result = self._upload(
+            mock_cls, client, tmp_path, {"wifi_saved": [self.ENTRY], "hotspot": True}, "--dry-run",
+        )
+        assert result.exit_code == 0, result.output
+        assert "007 (wlan1, 2.4 GHz)" in result.output
+        assert "Hotspot: on" in result.output
+        client.run_host_command.assert_not_called()
+        client.set_hotspot.assert_not_called()
+
+
+class TestDownloadWifiPins:
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_download_adds_interface_and_band(self, mock_cls, mock_mavlink, tmp_path):
+        client = _mock_blueos_client()
+        client.get_wifi_saved.return_value = [{"networkid": 0, "ssid": "007"}]
+
+        def run_host_command(cmd: str):
+            if "connection show id 007" in cmd:
+                return {"stdout": "wlan1\nbg\n", "stderr": "", "return_code": 0}
+            return {"stdout": "", "stderr": "", "return_code": 1}
+
+        client.run_host_command.side_effect = run_host_command
+        mock_cls.return_value = client
+        mock_mavlink.side_effect = MowerProvisionerError("no mav")
+
+        out = tmp_path / "config" / "out.yaml"
+        result = runner.invoke(app, ["config", "download", "192.168.2.2", "-o", out.name])
+        assert result.exit_code == 0, result.output
+        data = yaml.safe_load(out.read_text())
+        assert data["network"]["wifi_saved"] == [
+            {"networkid": 0, "ssid": "007", "interface": "wlan1", "band": "bg"}
+        ]
+
+
+class TestAutopilotBase:
+    def _write_base(self, path: Path, params: dict) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(yaml.dump({"autopilot_params": params}))
+        return path
+
+    @patch("skynet.cli.write_params", return_value=["CRUISE_SPEED", "WP_RADIUS", "GPS1_TYPE"])
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_upload_merges_sibling_base(self, mock_cls, mock_mavlink, mock_write, tmp_path):
+        mock_cls.return_value = _mock_blueos_client()
+        mock_mavlink.return_value = _mock_mavlink_conn([])
+        self._write_base(tmp_path / "autopilot_base.yaml", {"CRUISE_SPEED": 2.0, "WP_RADIUS": 3.0})
+        cfg = tmp_path / "rover.yaml"
+        cfg.write_text(yaml.dump({"autopilot_params": {"WP_RADIUS": 1.5, "GPS1_TYPE": 26.0}}))
+
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
+        assert result.exit_code == 0, result.output
+        assert "base 2, rover overrides 1, added 1" in result.output
+        written = mock_write.call_args[0][1]
+        assert written == {"CRUISE_SPEED": 2.0, "GPS1_TYPE": 26.0, "WP_RADIUS": 1.5}
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_upload_base_only_dry_run(self, mock_cls, tmp_path):
+        mock_cls.return_value = _mock_blueos_client()
+        self._write_base(tmp_path / "autopilot_base.yaml", {"CRUISE_SPEED": 2.0})
+        cfg = tmp_path / "rover.yaml"
+        cfg.write_text(yaml.dump({"hostname": "mower-01", "autopilot_params": {}}))
+
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "--dry-run"])
+        assert result.exit_code == 0, result.output
+        assert "Autopilot parameters: 1 (base 1, rover overrides 0, added 0)" in result.output
+        assert "CRUISE_SPEED = 2.0" in result.output
+        assert "(rover)" not in result.output
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_upload_dry_run_marks_rover_params(self, mock_cls, tmp_path):
+        mock_cls.return_value = _mock_blueos_client()
+        self._write_base(tmp_path / "autopilot_base.yaml", {"CRUISE_SPEED": 2.0})
+        cfg = tmp_path / "rover.yaml"
+        cfg.write_text(yaml.dump({"autopilot_params": {"CRUISE_SPEED": 3.0}}))
+
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "--dry-run"])
+        assert result.exit_code == 0, result.output
+        assert "CRUISE_SPEED = 3.0 (rover)" in result.output
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_upload_explicit_base_missing_exits(self, mock_cls, tmp_path):
+        mock_cls.return_value = _mock_blueos_client()
+        cfg = tmp_path / "rover.yaml"
+        cfg.write_text(yaml.dump({"hostname": "mower-01"}))
+
+        result = runner.invoke(app, [
+            "config", "upload", "192.168.2.2", str(cfg),
+            "--base", str(tmp_path / "nope.yaml"), "--dry-run",
+        ])
+        assert result.exit_code == 1
+        assert "Autopilot base not found" in result.output
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_upload_filters_calibration_from_base(self, mock_cls, tmp_path):
+        mock_cls.return_value = _mock_blueos_client()
+        cal_param = sorted(CALIBRATION_PARAMS)[0]
+        base = self._write_base(tmp_path / "fleet.yaml", {"CRUISE_SPEED": 2.0, cal_param: 1.0})
+        cfg = tmp_path / "rover.yaml"
+        cfg.write_text(yaml.dump({"hostname": "mower-01"}))
+
+        args = ["config", "upload", "192.168.2.2", str(cfg), "--base", str(base), "--dry-run"]
+        result = runner.invoke(app, args)
+        assert result.exit_code == 0, result.output
+        assert f"{cal_param} =" not in result.output
+
+        result = runner.invoke(app, args + ["--include-calibration"])
+        assert f"{cal_param} =" in result.output
+
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_download_writes_only_diffs(self, mock_cls, mock_mavlink, tmp_path):
+        mock_cls.return_value = _mock_blueos_client()
+        mock_mavlink.return_value = _mock_mavlink_conn([
+            _make_param_msg("CRUISE_SPEED", 2.0, 0, 2),
+            _make_param_msg("WP_RADIUS", 1.5, 1, 2),
+        ])
+        self._write_base(tmp_path / "config" / "autopilot_base.yaml", {"CRUISE_SPEED": 2.0, "WP_RADIUS": 3.0})
+
+        out = tmp_path / "config" / "rover.yaml"
+        result = runner.invoke(app, ["config", "download", "192.168.2.2", "-o", out.name])
+        assert result.exit_code == 0, result.output
+        assert yaml.safe_load(out.read_text())["autopilot_params"] == {"WP_RADIUS": 1.5}
+        assert "2 read, 1 differ from" in result.output
+
+
+class TestDownloadOutput:
+    """`config download` writes ./config/<name>.yaml and never the base."""
+
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_drops_dhcp_client_leases(self, mock_cls, mock_mavlink, tmp_path):
+        client = _mock_blueos_client()
+        client.get_ethernet.return_value = [
+            {"name": "eth0", "addresses": [
+                {"ip": "192.168.1.13", "mode": "client"},
+                {"ip": "192.168.2.2", "mode": "unmanaged"},
+            ]},
+            {"name": "eth1", "addresses": [{"ip": "192.168.10.1", "mode": "server"}]},
+        ]
+        mock_cls.return_value = client
+        mock_mavlink.side_effect = MowerProvisionerError("no mav")
+
+        result = runner.invoke(app, ["config", "download", "192.168.2.2"])
+        assert result.exit_code == 0, result.output
+        data = yaml.safe_load((tmp_path / "config" / "blueos.yaml").read_text())
+        assert data["network"]["ethernet"] == [
+            {"name": "eth0", "addresses": [{"ip": "192.168.2.2", "mode": "unmanaged"}]},
+            {"name": "eth1", "addresses": [{"ip": "192.168.10.1", "mode": "server"}]},
+        ]
+
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_autopilot_offline_keeps_existing_params(self, mock_cls, mock_mavlink, tmp_path):
+        mock_cls.return_value = _mock_blueos_client()
+        mock_mavlink.side_effect = MowerProvisionerError("no mav")
+        out = tmp_path / "config" / "rover.yaml"
+        out.parent.mkdir()
+        out.write_text(yaml.dump({"hostname": "old", "autopilot_params": {"GPS1_TYPE": 26.0}}))
+
+        result = runner.invoke(app, ["config", "download", "192.168.2.2", "-o", "rover.yaml"])
+        assert result.exit_code == 0, result.output
+        data = yaml.safe_load(out.read_text())
+        assert data["hostname"] == "blueos"  # rest of the file is refreshed
+        assert data["autopilot_params"] == {"GPS1_TYPE": 26.0}
+        assert "kept existing" in result.output
+
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_autopilot_offline_new_file_has_no_params(self, mock_cls, mock_mavlink, tmp_path):
+        mock_cls.return_value = _mock_blueos_client()
+        mock_mavlink.side_effect = MowerProvisionerError("no mav")
+
+        result = runner.invoke(app, ["config", "download", "192.168.2.2"])
+        assert result.exit_code == 0, result.output
+        data = yaml.safe_load((tmp_path / "config" / "blueos.yaml").read_text())
+        assert "autopilot_params" not in data
+        assert "none written" in result.output
+
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_falls_back_to_host_name(self, mock_cls, mock_mavlink, tmp_path):
+        client = _mock_blueos_client()
+        client.get_hostname.return_value = None
+        mock_cls.return_value = client
+        mock_mavlink.side_effect = MowerProvisionerError("no mav")
+
+        result = runner.invoke(app, ["config", "download", "blueos.local"])
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "config" / "blueos.local.yaml").exists()
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_output_config_prefix_accepted(self, mock_cls, tmp_path):
+        mock_cls.return_value = _mock_blueos_client()
+        with patch("skynet.cli.mavlink_connection", side_effect=MowerProvisionerError("x")):
+            result = runner.invoke(app, ["config", "download", "h", "-o", "config/sky9.yaml"])
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "config" / "sky9.yaml").exists()
+
+    @pytest.mark.parametrize("name", ["/tmp/x.yaml", "other/x.yaml", "autopilot_base.yaml"])
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_rejects_other_dirs_and_base(self, mock_cls, name, tmp_path):
+        result = runner.invoke(app, ["config", "download", "h", "-o", name])
+        assert result.exit_code == 1
+        mock_cls.assert_not_called()
+        assert not (tmp_path / "config" / "autopilot_base.yaml").exists()

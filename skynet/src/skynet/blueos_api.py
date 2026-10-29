@@ -145,6 +145,17 @@ class BlueOSClient:
     def get_hotspot(self) -> Any | None:
         return self._get_json("/wifi-manager/v1.0/hotspot")
 
+    def set_hotspot(self, enable: bool, timeout: float = 60.0) -> bool:
+        """Turn the BlueOS hotspot (uap0 on the first WiFi radio) on or off.
+
+        BlueOS saves the setting, so it persists across reboots.
+        """
+        return self._post(
+            "/wifi-manager/v1.0/hotspot",
+            params={"enable": enable},
+            timeout=httpx.Timeout(timeout),
+        )
+
     def connect_wifi(self, ssid: str, password: str, timeout: float = 60.0) -> bool:
         """Save and connect to a WiFi network.
 
