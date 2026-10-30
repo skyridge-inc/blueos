@@ -567,6 +567,41 @@ def _apply_wifi_profile(client: Any, ssid: str, spec: dict[str, str]) -> bool | 
     return True
 
 
+def _apply_autopilot_autostart(client: Any, enable: bool) -> bool | None:
+    """Install or remove the host's autopilot hot-plug start.
+
+    Returns True if files changed, False if already as wanted, None on failure.
+    """
+    from .host_config import autostart_install_command, autostart_remove_command
+
+    command = autostart_install_command() if enable else autostart_remove_command()
+    result = client.run_host_command(command)
+    if not isinstance(result, dict) or result.get("return_code") != 0:
+        return None
+    return "changed" in (result.get("stdout") or "")
+
+
+def _ensure_autopilot_running(client: Any) -> None:
+    """Start the BlueOS autopilot if no board is running.
+
+    BlueOS stops retrying ~1 min after boot, so a flight controller plugged in
+    later stays idle and MAVLink (port 5760) is never served.
+    """
+    import time
+
+    if client.autopilot_running() is not False:
+        return
+    with console.status("Autopilot not running in BlueOS — starting it..."):
+        started = client.start_autopilot()
+        deadline = time.monotonic() + 15.0
+        while started and client.autopilot_running() is False and time.monotonic() < deadline:
+            time.sleep(1.0)
+    if started:
+        console.print("Autopilot was not running in BlueOS — started it.")
+    else:
+        err_console.print("[yellow]Warning: Autopilot not running and BlueOS could not start it[/yellow]")
+
+
 def _load_base_params(base: Path | None, rover_yaml: Path) -> tuple[Path | None, dict[str, float]]:
     """Load the autopilot base for a rover YAML.
 
@@ -648,6 +683,7 @@ def download(
                 config = extract_config(client)
             with console.status("Downloading MediaMTX configuration..."):
                 config["mediamtx"] = fetch_mediamtx_config(client)
+            _ensure_autopilot_running(client)
         except BlueOSConnectionError as e:
             err_console.print(f"[red]{e}[/red]")
             raise typer.Exit(1)
@@ -833,6 +869,12 @@ def upload(
             f"  DHCP reservations: {len(reservations)} "
             f"(writes {DNSMASQ_HOST_PATH}; host reboots if changed)"
         )
+    autostart = config.get("autopilot_autostart")
+    if isinstance(autostart, bool):
+        changes.append(
+            "  Autopilot hot-plug start: "
+            + ("install (udev rule + service)" if autostart else "remove")
+        )
     rover_params = config.get("autopilot_params")
     if not isinstance(rover_params, dict):
         rover_params = {}
@@ -988,6 +1030,17 @@ def upload(
                     err_console.print("[yellow]Warning: Failed to apply DHCP reservations[/yellow]")
                 else:
                     uploaded.append(f"DHCP reservations ({len(reservations)})")
+
+            if isinstance(autostart, bool):
+                with console.status("Configuring autopilot hot-plug start..."):
+                    autostart_changed = _apply_autopilot_autostart(client, autostart)
+                if autostart_changed is None:
+                    err_console.print("[yellow]Warning: Failed to configure autopilot hot-plug start[/yellow]")
+                else:
+                    uploaded.append(f"autopilot hot-plug start ({'on' if autostart else 'off'})")
+
+            if params:
+                _ensure_autopilot_running(client)
         except BlueOSConnectionError as e:
             err_console.print(f"[red]{e}[/red]")
             raise typer.Exit(1)

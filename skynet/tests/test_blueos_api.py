@@ -325,3 +325,34 @@ class TestConnectWifi:
         req = route.calls.last.request
         assert json.loads(req.content) == {"ssid": "007", "password": "pw"}
         assert req.url.params["hidden"] == "false"
+
+
+class TestAutopilot:
+    @respx.mock
+    def test_running_when_board_reported(self, client):
+        respx.get(f"{BASE_URL}/ardupilot-manager/v1.0/board").mock(
+            return_value=httpx.Response(200, json={"name": "CubeOrange+", "path": "/dev/ttyACM1"})
+        )
+        assert client.autopilot_running() is True
+
+    @respx.mock
+    def test_not_running_when_board_null(self, client):
+        respx.get(f"{BASE_URL}/ardupilot-manager/v1.0/board").mock(
+            return_value=httpx.Response(200, content=b"null")  # FastAPI's body for None
+        )
+        assert client.autopilot_running() is False
+
+    @respx.mock
+    def test_unknown_on_http_error(self, client):
+        respx.get(f"{BASE_URL}/ardupilot-manager/v1.0/board").mock(
+            return_value=httpx.Response(500)
+        )
+        assert client.autopilot_running() is None
+
+    @respx.mock
+    def test_start_autopilot(self, client):
+        route = respx.post(f"{BASE_URL}/ardupilot-manager/v1.0/start").mock(
+            return_value=httpx.Response(200, json=None)
+        )
+        assert client.start_autopilot() is True
+        assert route.called

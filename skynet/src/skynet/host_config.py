@@ -129,3 +129,125 @@ def wifi_profile_set_command(ssid: str, profile: dict[str, str]) -> str:
         f"sudo nmcli connection modify id {q} {settings} && "
         f"sudo nmcli --wait 20 connection up id {q}"
     )
+
+
+# -- Autopilot hot-plug start (udev + systemd on the host) --
+# BlueOS's ardupilot-manager tries to start the autopilot at boot, retries
+# 10 times 5 s apart, then gives up until someone presses Start. A flight
+# controller plugged in (or powered) after that is listed as available but
+# never used. This udev rule runs a one-shot service that starts it.
+AUTOSTART_SCRIPT_PATH = "/usr/local/sbin/skynet-autopilot-start"
+AUTOSTART_SERVICE_NAME = "skynet-autopilot-start.service"
+AUTOSTART_SERVICE_PATH = f"/etc/systemd/system/{AUTOSTART_SERVICE_NAME}"
+AUTOSTART_RULE_PATH = "/etc/udev/rules.d/90-skynet-autopilot.rules"
+
+# USB vendor (and product) IDs of ArduPilot flight controllers.
+_FLIGHT_CONTROLLER_USB_IDS = (
+    ("2dae", None),    # CubePilot (Cube Orange/Orange+, ...)
+    ("1209", "5740"),  # ArduPilot ChibiOS (generic)
+    ("1209", "5741"),  # ArduPilot ChibiOS (bootloader)
+    ("3162", None),    # Holybro
+    ("26ac", None),    # 3D Robotics
+)
+
+_AUTOSTART_SCRIPT = """#!/bin/bash
+# Managed by skynet. Run by skynet-autopilot-start.service when udev sees a
+# flight controller. BlueOS only retries starting the autopilot for ~1 min
+# after boot, so a board plugged in later is never used until Start is pressed.
+API=http://localhost/ardupilot-manager/v1.0
+SETTINGS=$(ls /root/.config/blueos/ardupilot-manager/settings-*.json 2>/dev/null | sort -V | tail -1)
+
+sleep 10  # let the board leave its bootloader and re-enumerate
+board=
+for _ in $(seq 60); do  # BlueOS may still be booting
+    board=$(curl -fs -m5 "$API/board") && break
+    sleep 5
+done
+[ -n "$board" ] || { echo "BlueOS autopilot API not reachable"; exit 0; }
+[ "$board" = "null" ] || { echo "autopilot already running"; exit 0; }
+if [ -n "$SETTINGS" ] && python3 -c 'import json, sys; sys.exit(json.load(open(sys.argv[1])).get("start_on_boot", True) is not False)' "$SETTINGS"; then
+    echo "autopilot was stopped in BlueOS; not starting it"
+    exit 0
+fi
+sleep 20  # give BlueOS's own boot-time start the first chance
+[ "$(curl -fs -m5 "$API/board")" = "null" ] || { echo "autopilot started by BlueOS"; exit 0; }
+if curl -fs -m120 -X POST "$API/start" >/dev/null; then
+    echo "autopilot started"
+else
+    echo "autopilot start failed"
+fi
+"""
+
+_AUTOSTART_SERVICE = f"""# Managed by skynet.
+[Unit]
+Description=Start the BlueOS autopilot after a flight controller is plugged in
+
+[Service]
+Type=oneshot
+ExecStart={AUTOSTART_SCRIPT_PATH}
+TimeoutStartSec=10min
+"""
+
+
+def _autostart_rule() -> str:
+    lines = ["# Managed by skynet: start the BlueOS autopilot when a flight controller is plugged in."]
+    for vendor, product in _FLIGHT_CONTROLLER_USB_IDS:
+        match = f'ATTRS{{idVendor}}=="{vendor}"'
+        if product:
+            match += f', ATTRS{{idProduct}}=="{product}"'
+        lines.append(
+            f'ACTION=="add", SUBSYSTEM=="tty", KERNEL=="ttyACM*", {match}, '
+            f'TAG+="systemd", ENV{{SYSTEMD_WANTS}}+="{AUTOSTART_SERVICE_NAME}"'
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _b64(text: str) -> str:
+    return base64.b64encode(text.encode("utf-8")).decode("ascii")
+
+
+def _as_root(script: str) -> str:
+    """Run a bash script as root on the host (base64 avoids shell quoting)."""
+    return f"echo {_b64(script)} | base64 -d | sudo bash"
+
+
+def autostart_install_command() -> str:
+    """Idempotently install the hot-plug start files; prints changed/unchanged."""
+    files = (
+        (AUTOSTART_SCRIPT_PATH, "755", _AUTOSTART_SCRIPT),
+        (AUTOSTART_SERVICE_PATH, "644", _AUTOSTART_SERVICE),
+        (AUTOSTART_RULE_PATH, "644", _autostart_rule()),
+    )
+    puts = "\n".join(f"put {path} {mode} {_b64(content)}" for path, mode, content in files)
+    return _as_root(f"""changed=0
+put() {{
+    tmp=$(mktemp)
+    echo "$3" | base64 -d > "$tmp"
+    if ! cmp -s "$tmp" "$1"; then install -m "$2" "$tmp" "$1"; changed=1; fi
+    rm -f "$tmp"
+}}
+{puts}
+if [ $changed = 1 ]; then
+    systemctl daemon-reload && udevadm control --reload-rules && echo changed
+else
+    echo unchanged
+fi
+""")
+
+
+def autostart_remove_command() -> str:
+    """Remove the hot-plug start files; prints changed/unchanged."""
+    paths = (AUTOSTART_RULE_PATH, AUTOSTART_SERVICE_PATH, AUTOSTART_SCRIPT_PATH)
+    any_exists = " || ".join(f"[ -e {p} ]" for p in paths)
+    return _as_root(f"""if {any_exists}; then
+    rm -f {" ".join(paths)}
+    systemctl daemon-reload && udevadm control --reload-rules && echo changed
+else
+    echo unchanged
+fi
+""")
+
+
+def autostart_installed_command() -> str:
+    """Exit 0 if the hot-plug start rule is installed."""
+    return f"test -f {AUTOSTART_RULE_PATH}"

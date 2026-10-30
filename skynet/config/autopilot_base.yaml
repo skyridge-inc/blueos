@@ -150,7 +150,13 @@ autopilot_params:
   BRD_TYPE: 3.0
   BRD_VBUS_MIN: 4.300000190734863
   BRD_VSERVO_MIN: 0.0
-  BTN_ENABLE: 0.0
+  BTN_ENABLE: 1.0       # safety-chain feedback: K1 aux contact -> AUX OUT 1 + 2 (jumpered), see docs/DEADMAN.md
+  BTN_FUNC1: 54.0       # Hold when the safety chain is open (pin pulled HIGH; broken wire = HIGH too)
+  BTN_FUNC2: 81.0       # Disarm when the chain is open; re-arming after a reset is deliberate
+  BTN_OPTIONS1: 0.0     # logic input, not inverted: K1 contact grounds the pin while the chain is closed
+  BTN_OPTIONS2: 0.0
+  BTN_PIN1: 50.0        # AUX OUT 1 (needs SERVO9_FUNCTION = -1)
+  BTN_PIN2: 51.0        # AUX OUT 2 (needs SERVO10_FUNCTION = -1)
   CAM1_TYPE: 0.0
   CAM2_TYPE: 0.0
   CAM_AUTO_ONLY: 0.0
@@ -326,7 +332,7 @@ autopilot_params:
   FRSKY_DNLINK_ID: 27.0
   FRSKY_OPTIONS: 0.0
   FRSKY_UPLINK_ID: 13.0
-  FS_ACTION: 2.0
+  FS_ACTION: 2.0        # Hold. Never 5 (Terminate): disarm leaves steering live and mixed-mode tracks can spin
   FS_CRASH_CHECK: 0.0
   FS_EKF_ACTION: 1.0
   FS_EKF_THRESH: 0.800000011920929
@@ -364,7 +370,7 @@ autopilot_params:
   GPS_SBP_LOGMASK: -256.0
   GRIP_ENABLE: 0.0
   GUID_OPTIONS: 0.0
-  INITIAL_MODE: 0.0
+  INITIAL_MODE: 4.0     # Hold until RC appears; the mode switch (MODE_CH) then picks the mode. See docs/DEADMAN.md
   INS4_ACCOFFS_X: 0.0
   INS4_ACCOFFS_Y: 0.0
   INS4_ACCOFFS_Z: 0.0
@@ -479,7 +485,7 @@ autopilot_params:
   MOT_PWM_TYPE: 0.0
   MOT_SAFE_DISARM: 0.0
   MOT_SLEWRATE: 100.0
-  MOT_SPD_SCA_BASE: 1.0
+  MOT_SPD_SCA_BASE: 0.0   # tracks: turn rate does not fall with speed, so no steering scale-down
   MOT_STR_THR_MIX: 0.5
   MOT_THR_MAX: 100.0
   MOT_THR_MIN: 0.0
@@ -582,8 +588,8 @@ autopilot_params:
   RC4_OPTION: 0.0
   RC4_REVERSED: 0.0
   RC5_DZ: 0.0
-  RC5_OPTION: 0.0
-  RC5_REVERSED: 0.0
+  RC5_OPTION: 54.0      # deadman (momentary switch): released = Hold (throttle 0 + steering 0), pressed = mode-switch mode
+  RC5_REVERSED: 1.0    # released must read HIGH; drop if the transmitter already sends HIGH when released
   RC6_DZ: 0.0
   RC6_OPTION: 0.0
   RC6_REVERSED: 0.0
@@ -599,11 +605,11 @@ autopilot_params:
   RC9_OPTION: 0.0
   RC9_REVERSED: 0.0
   RC9_TRIM: 1500.0
-  RCMAP_PITCH: 2.0
-  RCMAP_ROLL: 1.0
-  RCMAP_THROTTLE: 3.0
+  RCMAP_PITCH: 3.0     # unused by Rover; moved off ch2
+  RCMAP_ROLL: 2.0      # receiver ch2 = steering (1500 neutral)
+  RCMAP_THROTTLE: 1.0  # receiver ch1 = throttle (1500 neutral)
   RCMAP_YAW: 4.0
-  RC_OPTIONS: 32.0
+  RC_OPTIONS: 160.0     # 32 (existing) + 128 ALLOW_SWITCH_REV so RC5_REVERSED applies to the switch
   RC_OVERRIDE_TIME: 3.0
   RC_PROTOCOLS: 1.0
   RELAY1_FUNCTION: 0.0
@@ -654,7 +660,7 @@ autopilot_params:
   SERIAL6_PROTOCOL: 22.0
   SERIAL_PASS1: 0.0
   SERIAL_PASS2: -1.0
-  SERVO10_FUNCTION: 0.0
+  SERVO10_FUNCTION: -1.0 # GPIO input for BTN_PIN2 (reboot after changing)
   SERVO10_MAX: 1900.0
   SERVO10_MIN: 1100.0
   SERVO10_REVERSED: 0.0
@@ -679,27 +685,27 @@ autopilot_params:
   SERVO14_MIN: 1100.0
   SERVO14_REVERSED: 0.0
   SERVO14_TRIM: 1500.0
-  SERVO15_FUNCTION: 0.0
+  SERVO15_FUNCTION: 73.0  # ThrottleLeft on a pinless output: marks the rover skid-steer so ArduPilot pivot-turns
   SERVO15_MAX: 1900.0
   SERVO15_MIN: 1100.0
   SERVO15_REVERSED: 0.0
   SERVO15_TRIM: 1500.0
-  SERVO16_FUNCTION: 0.0
+  SERVO16_FUNCTION: 74.0  # ThrottleRight on a pinless output (Cube Orange+ has 14 PWM outputs)
   SERVO16_MAX: 1900.0
   SERVO16_MIN: 1100.0
   SERVO16_REVERSED: 0.0
   SERVO16_TRIM: 1500.0
-  SERVO1_FUNCTION: 26.0
+  SERVO1_FUNCTION: 70.0   # Throttle -> track controller ch1 (forward/back, 1500 = stop)
   SERVO1_MAX: 1900.0
   SERVO1_MIN: 1100.0
   SERVO1_REVERSED: 0.0
   SERVO1_TRIM: 1500.0
-  SERVO2_FUNCTION: 0.0
+  SERVO2_FUNCTION: 26.0   # GroundSteering -> track controller ch2 (counter-rotate, 1500 = straight)
   SERVO2_MAX: 1900.0
   SERVO2_MIN: 1100.0
   SERVO2_REVERSED: 0.0
   SERVO2_TRIM: 1500.0
-  SERVO3_FUNCTION: 70.0
+  SERVO3_FUNCTION: 0.0    # was Throttle; drive now on ch1/ch2
   SERVO3_MAX: 1900.0
   SERVO3_MIN: 1100.0
   SERVO3_REVERSED: 0.0
@@ -729,7 +735,7 @@ autopilot_params:
   SERVO8_MIN: 1100.0
   SERVO8_REVERSED: 0.0
   SERVO8_TRIM: 1500.0
-  SERVO9_FUNCTION: 0.0
+  SERVO9_FUNCTION: -1.0  # GPIO input for BTN_PIN1 (reboot after changing)
   SERVO9_MAX: 1900.0
   SERVO9_MIN: 1100.0
   SERVO9_REVERSED: 0.0

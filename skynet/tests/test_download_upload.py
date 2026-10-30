@@ -905,3 +905,104 @@ class TestDownloadOutput:
         assert result.exit_code == 1
         mock_cls.assert_not_called()
         assert not (tmp_path / "config" / "autopilot_base.yaml").exists()
+
+
+class TestAutopilotStartAndHotplug:
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_download_starts_idle_autopilot(self, mock_cls, mock_mavlink, tmp_path):
+        client = _mock_blueos_client()
+        client.autopilot_running.side_effect = [False, True]
+        client.start_autopilot.return_value = True
+        mock_cls.return_value = client
+        mock_mavlink.side_effect = MowerProvisionerError("no mav")
+
+        result = runner.invoke(app, ["config", "download", "192.168.2.2"])
+        assert result.exit_code == 0, result.output
+        client.start_autopilot.assert_called_once()
+        assert "started it" in result.output
+
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_download_leaves_running_autopilot(self, mock_cls, mock_mavlink, tmp_path):
+        client = _mock_blueos_client()
+        client.autopilot_running.return_value = True
+        mock_cls.return_value = client
+        mock_mavlink.side_effect = MowerProvisionerError("no mav")
+
+        result = runner.invoke(app, ["config", "download", "192.168.2.2"])
+        assert result.exit_code == 0, result.output
+        client.start_autopilot.assert_not_called()
+
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_download_records_hotplug_start(self, mock_cls, mock_mavlink, tmp_path):
+        client = _mock_blueos_client()
+        client.run_host_command.side_effect = lambda cmd: {
+            "stdout": "", "stderr": "",
+            "return_code": 0 if "90-skynet-autopilot.rules" in cmd else 1,
+        }
+        mock_cls.return_value = client
+        mock_mavlink.side_effect = MowerProvisionerError("no mav")
+
+        result = runner.invoke(app, ["config", "download", "192.168.2.2"])
+        assert result.exit_code == 0, result.output
+        data = yaml.safe_load((tmp_path / "config" / "blueos.yaml").read_text())
+        assert data["autopilot_autostart"] is True
+
+    @patch("skynet.cli.write_params", return_value=["CRUISE_SPEED"])
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_upload_starts_idle_autopilot_before_params(self, mock_cls, mock_mavlink, mock_write, tmp_path):
+        client = _mock_blueos_client()
+        client.autopilot_running.side_effect = [False, True]
+        client.start_autopilot.return_value = True
+        mock_cls.return_value = client
+        mock_mavlink.return_value = _mock_mavlink_conn([])
+        cfg = tmp_path / "rover.yaml"
+        cfg.write_text(yaml.dump({"autopilot_params": {"CRUISE_SPEED": 2.0}}))
+
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
+        assert result.exit_code == 0, result.output
+        client.start_autopilot.assert_called_once()
+        mock_write.assert_called_once()
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_upload_without_params_does_not_start_autopilot(self, mock_cls, tmp_path):
+        client = _mock_blueos_client()
+        client.autopilot_running.return_value = False
+        mock_cls.return_value = client
+        cfg = tmp_path / "rover.yaml"
+        cfg.write_text(yaml.dump({"hostname": "mower-01"}))
+
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
+        assert result.exit_code == 0, result.output
+        client.start_autopilot.assert_not_called()
+
+    @pytest.mark.parametrize("enable, marker", [(True, "install"), (False, "remove")])
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_upload_applies_hotplug_start(self, mock_cls, enable, marker, tmp_path):
+        client = _mock_blueos_client()
+        client.run_host_command.return_value = {"stdout": "changed\n", "stderr": "", "return_code": 0}
+        mock_cls.return_value = client
+        cfg = tmp_path / "rover.yaml"
+        cfg.write_text(yaml.dump({"autopilot_autostart": enable}))
+
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
+        assert result.exit_code == 0, result.output
+        assert f"Autopilot hot-plug start: {marker}" in result.output
+        assert f"autopilot hot-plug start ({'on' if enable else 'off'})" in result.output
+        client.run_host_command.assert_called_once()
+        assert "sudo bash" in client.run_host_command.call_args[0][0]
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_upload_hotplug_dry_run_runs_nothing(self, mock_cls, tmp_path):
+        client = _mock_blueos_client()
+        mock_cls.return_value = client
+        cfg = tmp_path / "rover.yaml"
+        cfg.write_text(yaml.dump({"autopilot_autostart": True}))
+
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "--dry-run"])
+        assert result.exit_code == 0, result.output
+        client.run_host_command.assert_not_called()
+        client.start_autopilot.assert_not_called()

@@ -193,6 +193,28 @@ class BlueOSClient:
             },
         )
 
+    # -- Autopilot (ardupilot-manager) --
+
+    def autopilot_running(self) -> bool | None:
+        """Whether BlueOS has an autopilot board running; None if unknown."""
+        try:
+            resp = self._client.get("/ardupilot-manager/v1.0/board")
+            resp.raise_for_status()
+            self._connected = True
+            return resp.json() is not None
+        except httpx.ConnectError as e:
+            if not self._connected:
+                raise BlueOSConnectionError(
+                    f"Cannot reach {self._base_url}: {e}"
+                ) from e
+            return None
+        except (httpx.HTTPStatusError, httpx.HTTPError, ValueError):
+            return None
+
+    def start_autopilot(self, timeout: float = 120.0) -> bool:
+        """Start the autopilot on the detected board (also re-enables start on boot)."""
+        return self._post("/ardupilot-manager/v1.0/start", timeout=httpx.Timeout(timeout))
+
     # -- Extensions (Kraken v2) --
 
     def install_extension(self, extension: dict[str, Any], timeout: float = 600.0) -> bool:

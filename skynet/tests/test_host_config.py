@@ -114,3 +114,81 @@ class TestWifiProfile:
         cmd = wifi_profile_set_command("a'b", {"interface": "wlan1"})
         modify = cmd.split(" && ")[0]
         assert shlex.split(modify)[5] == "a'b"
+
+
+class TestAutopilotAutostart:
+    @staticmethod
+    def _root_script(command: str) -> str:
+        import base64
+        import re
+
+        match = re.fullmatch(r"echo (\S+) \| base64 -d \| sudo bash", command)
+        assert match, command
+        return base64.b64decode(match.group(1)).decode()
+
+    @staticmethod
+    def _installed_files(script: str) -> dict[str, tuple[str, str]]:
+        import base64
+        import re
+
+        return {
+            m.group(1): (m.group(2), base64.b64decode(m.group(3)).decode())
+            for m in re.finditer(r"^put (\S+) (\d+) (\S+)$", script, re.M)
+        }
+
+    def test_install_writes_rule_service_and_script(self):
+        from skynet.host_config import (
+            AUTOSTART_RULE_PATH,
+            AUTOSTART_SCRIPT_PATH,
+            AUTOSTART_SERVICE_NAME,
+            AUTOSTART_SERVICE_PATH,
+            autostart_install_command,
+        )
+
+        script = self._root_script(autostart_install_command())
+        files = self._installed_files(script)
+        assert set(files) == {AUTOSTART_RULE_PATH, AUTOSTART_SERVICE_PATH, AUTOSTART_SCRIPT_PATH}
+        assert files[AUTOSTART_SCRIPT_PATH][0] == "755"
+        rule = files[AUTOSTART_RULE_PATH][1]
+        assert 'ATTRS{idVendor}=="2dae"' in rule  # CubePilot
+        assert f'ENV{{SYSTEMD_WANTS}}+="{AUTOSTART_SERVICE_NAME}"' in rule
+        assert f"ExecStart={AUTOSTART_SCRIPT_PATH}" in files[AUTOSTART_SERVICE_PATH][1]
+        assert "udevadm control --reload-rules" in script
+
+    def test_hotplug_script_respects_user_stop(self):
+        from skynet.host_config import AUTOSTART_SCRIPT_PATH, autostart_install_command
+
+        files = self._installed_files(self._root_script(autostart_install_command()))
+        body = files[AUTOSTART_SCRIPT_PATH][1]
+        assert "start_on_boot" in body
+        assert '"$API/board"' in body and '-X POST "$API/start"' in body
+
+    def test_generated_scripts_are_valid_bash(self):
+        import shutil
+        import subprocess
+
+        from skynet.host_config import (
+            AUTOSTART_SCRIPT_PATH,
+            autostart_install_command,
+            autostart_remove_command,
+        )
+
+        if not shutil.which("bash"):
+            pytest.skip("bash not available")
+        install = self._root_script(autostart_install_command())
+        scripts = [install, self._root_script(autostart_remove_command()),
+                   self._installed_files(install)[AUTOSTART_SCRIPT_PATH][1]]
+        for script in scripts:
+            assert subprocess.run(["bash", "-n"], input=script, text=True).returncode == 0
+
+    def test_remove_deletes_all_three(self):
+        from skynet.host_config import (
+            AUTOSTART_RULE_PATH,
+            AUTOSTART_SCRIPT_PATH,
+            AUTOSTART_SERVICE_PATH,
+            autostart_remove_command,
+        )
+
+        script = self._root_script(autostart_remove_command())
+        for path in (AUTOSTART_RULE_PATH, AUTOSTART_SERVICE_PATH, AUTOSTART_SCRIPT_PATH):
+            assert path in script

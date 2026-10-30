@@ -63,6 +63,7 @@ network:
   - mac: 64:35:1c:00:f0:79
     ip: 192.168.10.2
     hostname: routecam
+autopilot_autostart: true   # udev starts the BlueOS autopilot when the Cube is plugged in after boot
 mediamtx:
   config_path: extensions/mediamtx/mediamtx.yml
   config:

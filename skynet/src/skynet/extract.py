@@ -12,6 +12,7 @@ from .blueos_api import BlueOSClient
 from .exceptions import ParamFileError
 from .host_config import (
     DNSMASQ_HOST_PATH,
+    autostart_installed_command,
     parse_dnsmasq_conf,
     parse_wifi_profile,
     wifi_profile_get_command,
@@ -146,6 +147,14 @@ def fetch_wifi_saved(client: BlueOSClient) -> list[Any] | None:
     return saved
 
 
+def fetch_autopilot_autostart(client: BlueOSClient) -> bool | None:
+    """Whether the skynet autopilot hot-plug start is installed; None if unknown."""
+    result = client.run_host_command(autostart_installed_command())
+    if not isinstance(result, dict) or result.get("return_code") is None:
+        return None
+    return result["return_code"] == 0
+
+
 def extract_config(client: BlueOSClient) -> dict[str, Any]:
     """Fetch provisionable configuration from a BlueOS device.
 
@@ -172,6 +181,9 @@ def extract_config(client: BlueOSClient) -> dict[str, Any]:
         "hotspot": client.get_hotspot(),
         "dhcp_reservations": fetch_dhcp_reservations(client),
     }
+
+    # Host udev/systemd hook that starts the autopilot when a board is plugged in
+    config["autopilot_autostart"] = fetch_autopilot_autostart(client)
 
     return config
 
