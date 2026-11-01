@@ -106,6 +106,7 @@ def write_params(
     include_calibration: bool = False,
     dry_run: bool = False,
     progress_callback: Any | None = None,
+    failed: list[str] | None = None,
 ) -> list[str]:
     """Write parameters to connected device.
 
@@ -117,6 +118,8 @@ def write_params(
         include_calibration: If False, skip calibration params.
         dry_run: If True, return list of params that would be written without writing.
         progress_callback: Optional callable(written, total) for progress updates.
+        failed: If given, names that get no ack are appended here and the
+            write carries on, instead of raising.
 
     Returns:
         List of parameter names that were written (or would be written if dry_run).
@@ -165,6 +168,11 @@ def write_params(
             if success:
                 break
 
+        if not success and failed is not None:
+            failed.append(name)
+            if progress_callback:
+                progress_callback(i + 1, total)
+            continue
         if not success:
             raise ParameterWriteError(
                 f"Failed to write {name}={value} after {WRITE_RETRIES} attempts"

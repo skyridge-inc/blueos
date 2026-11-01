@@ -115,6 +115,19 @@ video_streams:   # mavlink-camera-manager streams; Cockpit plays these over WebR
   source: Redirect   # relay the MediaMTX path below, so MediaMTX stays the camera's only client
   endpoints:
   - rtsp://127.0.0.1:8555/front_cockpit
+# Battery monitors on the Cube's power ports; skynet turns each entry into the
+# port's BATT*/BATT2* params (src/skynet/battery.py has the presets).
+batteries:
+- port: power1               # Holybro PM02 V3 6-pin -> Cube POWER1 (BATT_*)
+  sensor: holybro_pm02_v3    # analog V/I; senses the 24 V electronics bus only
+  chemistry: lifepo4         # 12.8 V LiFePO4 blocks: low 12.8 V, critical 12.0 V each
+  batteries_in_series: 2     # the 24 V tap = 2 of the 4 x 12 V string -> low 25.6, critical 24.0
+  low_action: hold           # below low for BATT_LOW_TIMER (10 s): Hold, tracks stop
+  critical_action: hold
+  # capacity_mah unset (0): the sensor sees only the 24 V load, not the 48 V tracks,
+  # and the generator recharges, so a coulomb-counted remaining % would be wrong.
+  # volt_mult / amp_per_volt default to Holybro's nominal 18.182 / 36.364; replace
+  # with multimeter-calibrated values (download copies them from the Cube).
 autopilot_params:   # overrides on top of autopilot_base.yaml
   # ArduPilot has no string name param. BRD_SERIAL_NUM is a free user-set integer
   # (no effect on flight code), so it holds the rover number: sky1 -> 1.

@@ -134,6 +134,18 @@ autopilot_params:
   offline, the file keeps its existing `autopilot_params`, and a new file gets none.
 - `--base PATH` picks a different base file. With no base file, both commands behave as before.
 
+**Batteries:** a rover YAML's `batteries:` list says what is wired to each Cube power port
+(`port: power1|power2`, `sensor: holybro_pm02_v3`, `chemistry: lifepo4|lead_acid`,
+`batteries_in_series`, `low_action`/`critical_action`: `none|rtl|hold|smartrtl|smartrtl_or_hold`,
+optional `capacity_mah`, `volt_mult`, `amp_per_volt`). Upload turns it into that port's
+`BATT*`/`BATT2*` params, layered between the base and the rover's own `autopilot_params`. The
+sensor scaling is written even without `--include-calibration`, because the YAML states it.
+The pin and scale params exist only after `BATT*_MONITOR` is enabled and the Cube reboots, so
+the first upload that enables a monitor reboots the autopilot (never while armed) and writes them
+after. Download keeps the section, copies a calibrated `VOLT_MULT`/`AMP_PERVLT` from the Cube
+into it, and leaves those `BATT*` params out of `autopilot_params`. Cockpit's battery indicator
+shows POWER1 (battery 1) with no extra setup.
+
 **Deadman and E-stop:** the base sets ch5 as a hold-to-run switch (released → Hold), and the RC
 failsafe to Hold. The E-stops cut the receiver's power, so the RC failsafe doubles as E-stop
 feedback. With the mixed-mode track controller, ArduPilot E-stop and disarm do not stop steering,

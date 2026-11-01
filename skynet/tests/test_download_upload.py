@@ -1250,3 +1250,119 @@ class TestUploadCockpitWidgetOptions:
         assert result.exit_code == 0, result.output
         data = yaml.safe_load((tmp_path / "config" / "blueos.yaml").read_text())
         assert data["cockpit_widget_options"] == {"sky1": {"VideoPlayer": {"videoFitStyle": "fill"}}}
+
+
+SKY1_BATTERIES_YAML = (
+    "hostname: sky1\n"
+    "batteries:\n"
+    "- port: power1\n"
+    "  sensor: holybro_pm02_v3\n"
+    "  chemistry: lifepo4\n"
+    "  batteries_in_series: 2\n"
+    "  low_action: hold\n"
+    "  critical_action: hold\n"
+)
+
+
+class TestUploadBatteries:
+    def test_dry_run_lists_battery_params(self, tmp_path):
+        cfg = tmp_path / "sky1.yaml"
+        cfg.write_text(SKY1_BATTERIES_YAML)
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "--dry-run"])
+        assert result.exit_code == 0, result.output
+        assert "Battery power1: holybro_pm02_v3, lifepo4 x2" in result.output
+        # calibration-listed scaling is still written: the batteries section states it
+        assert "BATT_VOLT_MULT = 18.182" in result.output
+        assert "BATT_LOW_VOLT = 25.6" in result.output
+
+    def test_bad_battery_entry_exits(self, tmp_path):
+        cfg = tmp_path / "sky1.yaml"
+        cfg.write_text(SKY1_BATTERIES_YAML.replace("lifepo4", "nimh"))
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "--dry-run"])
+        assert result.exit_code == 1
+        assert "chemistry" in result.output
+
+    @patch("skynet.cli._reboot_and_write")
+    @patch("skynet.cli.write_params")
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_reboots_for_params_missing_until_monitor_enabled(
+        self, mock_cls, mock_mavlink, mock_write, mock_reboot, tmp_path,
+    ):
+        mock_cls.return_value = _mock_blueos_client()
+        conn = MagicMock()
+        mock_mavlink.return_value.__enter__.return_value = conn
+
+        def fake_write(conn, params, *, include_calibration, progress_callback=None, failed=None):
+            if failed is not None:      # late pass: pins/scale not on the Cube yet
+                failed.extend(params)
+                return []
+            return list(params)
+
+        mock_write.side_effect = fake_write
+        mock_reboot.side_effect = lambda conn, params: list(params)
+        cfg = tmp_path / "sky1.yaml"
+        cfg.write_text(SKY1_BATTERIES_YAML)
+
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
+        assert result.exit_code == 0, result.output
+        first = mock_write.call_args_list[0].args[1]
+        assert first["BATT_MONITOR"] == 4.0
+        assert "BATT_VOLT_MULT" not in first
+        late = mock_reboot.call_args.args[1]
+        assert set(late) == {"BATT_VOLT_PIN", "BATT_CURR_PIN", "BATT_VOLT_MULT", "BATT_AMP_PERVLT"}
+
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_download_keeps_batteries_and_drops_their_params(self, mock_cls, mock_mavlink, tmp_path):
+        mock_cls.return_value = _mock_blueos_client()
+        mock_mavlink.return_value = _mock_mavlink_conn([
+            _make_param_msg("BATT_MONITOR", 4.0, 0, 4),
+            _make_param_msg("BATT_VOLT_MULT", 18.04, 1, 4),
+            _make_param_msg("BATT_LOW_VOLT", 25.6, 2, 4),
+            _make_param_msg("CRUISE_SPEED", 2.0, 3, 4),
+        ])
+        (tmp_path / "config").mkdir()
+        out = tmp_path / "config" / "blueos.yaml"
+        out.write_text(SKY1_BATTERIES_YAML)
+
+        result = runner.invoke(app, ["config", "download", "192.168.2.2"])
+        assert result.exit_code == 0, result.output
+        data = yaml.safe_load(out.read_text())
+        assert data["batteries"][0]["chemistry"] == "lifepo4"
+        assert data["batteries"][0]["volt_mult"] == 18.04      # calibration kept
+        assert not any(k.startswith("BATT") for k in data["autopilot_params"])
+        assert "1 sensor scale value(s) updated" in result.output
+
+
+class TestRebootAndWrite:
+    @staticmethod
+    def _hb(armed: bool, comp: int = 1):
+        hb = MagicMock()
+        hb.base_mode = 128 if armed else 0
+        hb.get_srcComponent.return_value = comp
+        return hb
+
+    @patch("skynet.cli.time.sleep")
+    @patch("skynet.gps_sim.reboot_autopilot")
+    @patch("skynet.cli.write_params")
+    def test_reboots_then_writes(self, mock_write, mock_reboot, _sleep):
+        from skynet.cli import _reboot_and_write
+        conn = MagicMock(target_component=1)
+        conn.recv_match.side_effect = [self._hb(False, comp=191), self._hb(False), self._hb(False)]
+        mock_write.return_value = ["BATT_VOLT_MULT"]
+
+        assert _reboot_and_write(conn, {"BATT_VOLT_MULT": 18.182}) == ["BATT_VOLT_MULT"]
+        mock_reboot.assert_called_once_with(conn)
+        mock_write.assert_called_once_with(conn, {"BATT_VOLT_MULT": 18.182}, include_calibration=True)
+
+    @patch("skynet.gps_sim.reboot_autopilot")
+    def test_refuses_while_armed(self, mock_reboot):
+        from skynet.cli import _reboot_and_write
+        from skynet.exceptions import ParameterWriteError
+        conn = MagicMock(target_component=1)
+        conn.recv_match.return_value = self._hb(True)
+
+        with pytest.raises(ParameterWriteError, match="armed"):
+            _reboot_and_write(conn, {"BATT_VOLT_MULT": 18.182})
+        mock_reboot.assert_not_called()

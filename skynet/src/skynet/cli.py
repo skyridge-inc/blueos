@@ -650,6 +650,43 @@ def _load_base_params(base: Path | None, rover_yaml: Path) -> tuple[Path | None,
         raise typer.Exit(1)
 
 
+def _reboot_and_write(conn: Any, params: dict[str, float]) -> list[str]:
+    """Reboot the autopilot, wait for it to come back, then write params.
+
+    For params that appear only after a reboot (e.g. BATT_VOLT_MULT once
+    BATT_MONITOR is set). Refuses while armed. Returns the names written.
+    """
+    from pymavlink import mavutil
+
+    from .exceptions import ParameterWriteError
+    from .gps_sim import reboot_autopilot
+
+    def autopilot_heartbeat(timeout: float) -> Any:
+        """Next heartbeat from the autopilot itself, not other BlueOS components."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            hb = conn.recv_match(type="HEARTBEAT", blocking=True, timeout=1)
+            if hb is not None and hb.get_srcComponent() == conn.target_component:
+                return hb
+        return None
+
+    hb = autopilot_heartbeat(5)
+    if hb is not None and hb.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED:
+        raise ParameterWriteError(
+            f"{', '.join(params)} need an autopilot reboot, but it is armed — "
+            "disarm, reboot it and upload again"
+        )
+    with console.status(f"Rebooting autopilot to apply {', '.join(sorted(params))}..."):
+        reboot_autopilot(conn)
+        time.sleep(8)  # let the old heartbeats stop before waiting for new ones
+        if autopilot_heartbeat(90) is None:
+            raise ParameterWriteError("autopilot did not come back within 90 s after reboot")
+        time.sleep(3)  # params load just after the first heartbeat
+        written = write_params(conn, params, include_calibration=True)
+    console.print(f"  Autopilot rebooted; wrote {', '.join(sorted(written))}")
+    return written
+
+
 @config_app.command()
 def download(
     host: Annotated[
@@ -680,6 +717,7 @@ def download(
     """
     import httpx as _httpx
 
+    from .battery import BATTERIES_KEY, battery_params, sync_scaling_from_device
     from .blueos_api import BlueOSClient
     from .exceptions import BlueOSConnectionError, MowerProvisionerError, ParamFileError
     from .extract import (
@@ -726,6 +764,18 @@ def download(
         out_path = Path(CONFIG_DIR) / output_filename(url)
     base_path, base_params = _load_base_params(base, out_path)
 
+    # YAML-only sections (never read back from the device) come from the existing file.
+    try:
+        existing_yaml = load_yaml(out_path) if out_path.is_file() else {}
+    except ParamFileError:
+        existing_yaml = {}
+    batteries = existing_yaml.get(BATTERIES_KEY)
+    try:
+        battery_names = set(battery_params(batteries))
+    except ParamFileError as e:
+        err_console.print(f"[yellow]Warning: {out_path}: {e}[/yellow]")
+        battery_names = set()
+
     # 2. Fetch autopilot parameters over MAVLink TCP
     params: dict[str, float] = {}
     mavlink_device = f"tcp:{host}:{MAVLINK_PORT}"
@@ -748,7 +798,12 @@ def download(
         err_console.print(f"[yellow]Warning: Could not fetch autopilot params: {e}[/yellow]")
 
     # 3. Filter calibration params and add to config
+    scaling_synced = 0
     if params:
+        # The batteries section owns its BATT* params; keep a calibration done
+        # on the autopilot, and leave those params out of autopilot_params.
+        scaling_synced = sync_scaling_from_device(batteries, params)
+        params = {k: v for k, v in params.items() if k not in battery_names}
         if not include_calibration:
             params = {k: v for k, v in params.items() if k not in CALIBRATION_PARAMS}
         if base_path is not None:
@@ -757,21 +812,13 @@ def download(
             config["autopilot_params"] = dict(sorted(params.items()))
     else:
         # Autopilot offline: keep the file's own params rather than wiping them.
-        try:
-            existing = load_yaml(out_path) if out_path.is_file() else {}
-        except ParamFileError:
-            existing = {}
-        if "autopilot_params" in existing:
-            config["autopilot_params"] = existing["autopilot_params"]
+        if "autopilot_params" in existing_yaml:
+            config["autopilot_params"] = existing_yaml["autopilot_params"]
 
-    # Cockpit widget options are YAML-only intent (Cockpit layouts are never
-    # downloaded), so carry them over from the existing file.
-    try:
-        existing_yaml = load_yaml(out_path) if out_path.is_file() else {}
-    except ParamFileError:
-        existing_yaml = {}
     if COCKPIT_WIDGET_OPTIONS_KEY in existing_yaml:
         config[COCKPIT_WIDGET_OPTIONS_KEY] = existing_yaml[COCKPIT_WIDGET_OPTIONS_KEY]
+    if batteries is not None:
+        config[BATTERIES_KEY] = batteries
 
     # 4. Save
     save_yaml(config, out_path)
@@ -782,6 +829,10 @@ def download(
     console.print(f"  BlueOS extensions: {ext_count}")
     if config.get("video_streams") is not None:
         console.print(f"  Video streams: {len(config['video_streams'])}")
+    if scaling_synced:
+        console.print(
+            f"  Batteries: {scaling_synced} sensor scale value(s) updated from the autopilot"
+        )
     if params and base_path is not None:
         console.print(
             f"  Autopilot parameters: {len(params)} read, "
@@ -856,6 +907,7 @@ def upload(
     )
     from .host_config import DNSMASQ_HOST_PATH, WIFI_BANDS
 
+    from .battery import BATTERIES_KEY, PORTS, battery_params, is_port_dependent
     from .exceptions import ParamFileError
 
     if config_file is None:
@@ -976,16 +1028,33 @@ def upload(
     rover_params = config.get("autopilot_params")
     if not isinstance(rover_params, dict):
         rover_params = {}
-    params = merge_autopilot_params(base_params, rover_params)
+    try:
+        battery = battery_params(config.get(BATTERIES_KEY))
+    except ParamFileError as e:
+        err_console.print(f"[red]{config_file}: {e}[/red]")
+        raise typer.Exit(1)
+    for entry in config.get(BATTERIES_KEY) or []:
+        prefix = PORTS[str(entry["port"]).lower()][0]
+        changes.append(
+            f"  Battery {entry['port']}: {entry['sensor']}, {entry['chemistry']} "
+            f"x{entry.get('batteries_in_series', 1)} — "
+            f"low {battery[prefix + '_LOW_VOLT']:g} V → {entry.get('low_action', 'none')}, "
+            f"critical {battery[prefix + '_CRT_VOLT']:g} V → {entry.get('critical_action', 'none')}"
+        )
+    params = merge_autopilot_params(merge_autopilot_params(base_params, battery), rover_params)
     if params:
         if not include_calibration:
-            params = {k: v for k, v in params.items() if k not in CALIBRATION_PARAMS}
+            # The batteries section states its sensor scaling on purpose.
+            params = {
+                k: v for k, v in params.items() if k not in CALIBRATION_PARAMS or k in battery
+            }
         if base_path is not None:
             overrides = sum(1 for k in rover_params if k in base_params)
             changes.append(
                 f"  Autopilot parameters: {len(params)} "
-                f"(base {len(base_params)}, rover overrides {overrides}, "
-                f"added {len(rover_params) - overrides})"
+                f"(base {len(base_params)}, "
+                + (f"batteries {len(battery)}, " if battery else "")
+                + f"rover overrides {overrides}, added {len(rover_params) - overrides})"
             )
         else:
             changes.append(f"  Autopilot parameters: {len(params)}")
@@ -1251,12 +1320,23 @@ def upload(
                     def on_progress(written: int, total: int) -> None:
                         progress.update(task, completed=written)
 
+                    # Battery pin/scale params only exist once BATT*_MONITOR is
+                    # set and the autopilot has rebooted, so they go last.
+                    late = {k: v for k, v in params.items() if is_port_dependent(k)}
                     written = write_params(
                         conn,
-                        params,
+                        {k: v for k, v in params.items() if k not in late},
                         include_calibration=True,  # already filtered above
                         progress_callback=on_progress,
                     )
+                    missing: list[str] = []
+                    if late:
+                        written += write_params(
+                            conn, late, include_calibration=True, failed=missing
+                        )
+                        progress.update(task, completed=len(params))
+                if missing:
+                    written += _reboot_and_write(conn, {k: late[k] for k in missing})
             uploaded.append(f"autopilot params ({len(written)})")
         except MowerProvisionerError as e:
             err_console.print(f"[yellow]Warning: Could not write autopilot params: {e}[/yellow]")
