@@ -294,6 +294,75 @@ def plan_cockpit_stream_renames(
     return plans
 
 
+COCKPIT_WIDGET_OPTIONS_KEY = "cockpit_widget_options"
+
+
+@dataclass
+class CockpitWidgetOptionsPlan:
+    """Cockpit settings to rewrite so a user's widgets get the YAML's options."""
+
+    user: str
+    updates: dict[str, Any] = field(default_factory=dict)     # bag key -> new setting value
+    widget_count: int = 0
+
+
+def _set_widget_options(node: Any, by_component: dict[str, dict[str, Any]]) -> int:
+    """Apply options to widgets (dicts with ``component`` + ``options``) in place.
+
+    Returns how many widgets changed.
+    """
+    count = 0
+    if isinstance(node, dict):
+        wanted = by_component.get(node.get("component"))  # type: ignore[arg-type]
+        options = node.get("options")
+        if wanted and isinstance(options, dict):
+            if any(options.get(k) != v for k, v in wanted.items()):
+                options.update(wanted)
+                count += 1
+        for value in node.values():
+            count += _set_widget_options(value, by_component)
+    elif isinstance(node, list):
+        for item in node:
+            count += _set_widget_options(item, by_component)
+    return count
+
+
+def plan_cockpit_widget_options(
+    widget_options: Any, device_bag: dict[str, Any] | None,
+) -> list[CockpitWidgetOptionsPlan]:
+    """Work out which Cockpit settings to rewrite for ``cockpit_widget_options``.
+
+    ``widget_options`` maps Cockpit user -> widget component -> options, e.g.
+    ``{"sky1": {"VideoPlayer": {"videoFitStyle": "fill"}}}``. Every widget of
+    that component in any of the user's settings (all profiles and views) gets
+    those options; other options and widgets are untouched. Settings already
+    matching are left out, so users with nothing to change get no plan.
+    """
+    if not isinstance(widget_options, dict):
+        return []
+    settings_root = (device_bag or {}).get("cockpit", {})
+    settings_root = settings_root.get("settings", {}) if isinstance(settings_root, dict) else {}
+    if not isinstance(settings_root, dict):
+        return []
+
+    plans: list[CockpitWidgetOptionsPlan] = []
+    for user, by_component in widget_options.items():
+        user_settings = settings_root.get(user)
+        if not isinstance(user_settings, dict) or not isinstance(by_component, dict):
+            continue
+        by_component = {c: o for c, o in by_component.items() if isinstance(o, dict) and o}
+        plan = CockpitWidgetOptionsPlan(user=str(user))
+        for setting_key, value in user_settings.items():
+            updated = copy.deepcopy(value)
+            changed = _set_widget_options(updated, by_component)
+            if changed:
+                plan.updates[f"cockpit/settings/{user}/{setting_key}"] = updated
+                plan.widget_count += changed
+        if plan.updates:
+            plans.append(plan)
+    return plans
+
+
 def fetch_dhcp_reservations(client: BlueOSClient) -> list[dict[str, Any]] | None:
     """Read static DHCP reservations from the host dnsmasq config.
 

@@ -531,3 +531,44 @@ class TestPlanCockpitStreamRenames:
         device = self._device_bag([{"name": "Stream 1", "externalId": "front"}])
         bag = {"major_tom": {"token": "x"}, "cockpit/settings/sky1/cockpit-custom-rtc-config": {}}
         assert plan_cockpit_stream_renames(bag, device) == []
+
+
+class TestPlanCockpitWidgetOptions:
+    @staticmethod
+    def _bag(widgets):
+        return {"cockpit": {"settings": {"sky1": {
+            "cockpit-saved-profiles-v8": [{"views": [{"widgets": widgets}]}],
+            "cockpit-alert-volume": 1,
+        }}}}
+
+    @staticmethod
+    def _video(fit, **extra):
+        return {"component": "VideoPlayer",
+                "options": {"videoFitStyle": fit, "internalStreamName": "front", **extra}}
+
+    def test_sets_option_on_every_matching_widget(self):
+        from skynet.extract import plan_cockpit_widget_options
+        bag = self._bag([self._video("cover"), self._video("fill"),
+                         {"component": "Map", "options": {"zoom": 3}}])
+        plans = plan_cockpit_widget_options({"sky1": {"VideoPlayer": {"videoFitStyle": "fill"}}}, bag)
+        assert len(plans) == 1
+        assert plans[0].widget_count == 1
+        updated = plans[0].updates["cockpit/settings/sky1/cockpit-saved-profiles-v8"]
+        widgets = updated[0]["views"][0]["widgets"]
+        assert [w["options"].get("videoFitStyle") for w in widgets[:2]] == ["fill", "fill"]
+        assert widgets[0]["options"]["internalStreamName"] == "front"   # other options kept
+        assert widgets[2] == {"component": "Map", "options": {"zoom": 3}}
+        # the device bag itself is not modified
+        assert bag["cockpit"]["settings"]["sky1"]["cockpit-saved-profiles-v8"][0]["views"][0]["widgets"][0]["options"]["videoFitStyle"] == "cover"
+
+    def test_no_plan_when_already_set(self):
+        from skynet.extract import plan_cockpit_widget_options
+        bag = self._bag([self._video("fill")])
+        assert plan_cockpit_widget_options({"sky1": {"VideoPlayer": {"videoFitStyle": "fill"}}}, bag) == []
+
+    def test_unknown_user_or_bad_input(self):
+        from skynet.extract import plan_cockpit_widget_options
+        bag = self._bag([self._video("cover")])
+        assert plan_cockpit_widget_options({"other": {"VideoPlayer": {"videoFitStyle": "fill"}}}, bag) == []
+        assert plan_cockpit_widget_options(None, bag) == []
+        assert plan_cockpit_widget_options({"sky1": {"VideoPlayer": {"videoFitStyle": "fill"}}}, None) == []

@@ -684,6 +684,7 @@ def download(
     from .exceptions import BlueOSConnectionError, MowerProvisionerError, ParamFileError
     from .extract import (
         AUTOPILOT_BASE_FILENAME,
+        COCKPIT_WIDGET_OPTIONS_KEY,
         extract_config,
         fetch_mediamtx_config,
         load_yaml,
@@ -763,6 +764,15 @@ def download(
         if "autopilot_params" in existing:
             config["autopilot_params"] = existing["autopilot_params"]
 
+    # Cockpit widget options are YAML-only intent (Cockpit layouts are never
+    # downloaded), so carry them over from the existing file.
+    try:
+        existing_yaml = load_yaml(out_path) if out_path.is_file() else {}
+    except ParamFileError:
+        existing_yaml = {}
+    if COCKPIT_WIDGET_OPTIONS_KEY in existing_yaml:
+        config[COCKPIT_WIDGET_OPTIONS_KEY] = existing_yaml[COCKPIT_WIDGET_OPTIONS_KEY]
+
     # 4. Save
     save_yaml(config, out_path)
 
@@ -836,9 +846,11 @@ def upload(
     from .exceptions import BlueOSConnectionError, MowerProvisionerError
     from .extract import (
         COCKPIT_CORRESPONDENCY_BAG_KEY,
+        COCKPIT_WIDGET_OPTIONS_KEY,
         load_yaml,
         merge_autopilot_params,
         plan_cockpit_stream_renames,
+        plan_cockpit_widget_options,
         push_mediamtx_config,
         video_stream_post_body,
     )
@@ -878,6 +890,18 @@ def upload(
         changes.append(
             f"  Cockpit stream names: {', '.join(cockpit_rename_users)}"
             " (video widgets re-pointed to any renamed stream)"
+        )
+    widget_options = config.get(COCKPIT_WIDGET_OPTIONS_KEY)
+    if isinstance(widget_options, dict) and widget_options:
+        changes.append(
+            "  Cockpit widget options: "
+            + "; ".join(
+                f"{user}: " + ", ".join(
+                    f"{comp} {', '.join(f'{k}={v}' for k, v in opts.items())}"
+                    for comp, opts in comps.items() if isinstance(opts, dict)
+                )
+                for user, comps in widget_options.items() if isinstance(comps, dict)
+            )
         )
     extensions = [
         e for e in (config.get("extensions") or [])
@@ -1077,6 +1101,35 @@ def upload(
                             err_console.print(f"[yellow]Warning: Failed to set bag/{key}[/yellow]")
                     if bag_ok:
                         uploaded.append(f"bag ({bag_ok} entries)")
+
+                # Widget options live inside Cockpit's saved layouts, so read the
+                # device's current settings (after any re-pointing above) and
+                # rewrite only the settings holding a widget that differs.
+                if isinstance(widget_options, dict) and widget_options:
+                    device_bag = client.get_bag()
+                    if device_bag is None:
+                        err_console.print(
+                            "[yellow]Warning: Cannot read Cockpit settings from the device — "
+                            "widget options not applied[/yellow]"
+                        )
+                    widget_total = 0
+                    for plan in plan_cockpit_widget_options(widget_options, device_bag):
+                        failed = [k for k, v in plan.updates.items() if not client.set_bag(k, v)]
+                        if failed:
+                            err_console.print(
+                                f"[yellow]Warning: Failed to set Cockpit widget options in "
+                                f"{', '.join(failed)}[/yellow]"
+                            )
+                        else:
+                            widget_total += plan.widget_count
+                            console.print(
+                                f"  Cockpit user '{plan.user}': "
+                                f"{plan.widget_count} widgets updated"
+                            )
+                    if device_bag is not None and not widget_total:
+                        console.print("  Cockpit widget options: already set")
+                    elif widget_total:
+                        uploaded.append(f"cockpit widgets ({widget_total})")
 
             # Extensions go first so MediaMTX's config dir exists before the push
             if extensions:

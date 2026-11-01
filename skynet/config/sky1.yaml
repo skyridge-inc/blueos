@@ -53,6 +53,12 @@ bag:
   # candidate and ICE fails. Empty list = accept every candidate MCM offers.
   cockpit/settings/sky1/cockpit-enable-auto-ice-ip-fetch: false
   cockpit/settings/sky1/cockpit-allowed-stream-ips: []
+# Options set on every widget of that component in the user's saved Cockpit
+# layouts (all profiles and views); other widget options are left alone.
+cockpit_widget_options:
+  sky1:                      # Cockpit user
+    VideoPlayer:
+      videoFitStyle: fill    # stretch to the widget; Cockpit's default is cover (crops)
 network:
   ethernet:
   - name: eth0

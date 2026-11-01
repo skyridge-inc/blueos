@@ -1183,3 +1183,70 @@ class TestRoverShortName:
         assert result.exit_code == 0, result.output
         assert mock_cls.call_args.args[0] == "http://sky1.netbird.cloud"
         assert mock_mavlink.call_args.args[0] == "tcp:sky1.netbird.cloud:5760"
+
+
+class TestUploadCockpitWidgetOptions:
+    YAML = (
+        "hostname: sky1\n"
+        "cockpit_widget_options:\n"
+        "  sky1:\n"
+        "    VideoPlayer:\n"
+        "      videoFitStyle: fill\n"
+    )
+
+    @staticmethod
+    def _device_bag(fit):
+        return {"cockpit": {"settings": {"sky1": {"cockpit-saved-profiles-v8": [{"views": [{"widgets": [
+            {"component": "VideoPlayer", "options": {"videoFitStyle": fit}},
+        ]}]}]}}}}
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_rewrites_layout_with_fill(self, mock_cls, tmp_path):
+        client = _mock_blueos_client()
+        client.get_bag.return_value = self._device_bag("cover")
+        mock_cls.return_value = client
+        cfg = tmp_path / "sky1.yaml"
+        cfg.write_text(self.YAML)
+
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
+        assert result.exit_code == 0, result.output
+        client.set_bag.assert_any_call(
+            "cockpit/settings/sky1/cockpit-saved-profiles-v8",
+            [{"views": [{"widgets": [
+                {"component": "VideoPlayer", "options": {"videoFitStyle": "fill"}},
+            ]}]}],
+        )
+        assert "1 widgets updated" in result.output
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_already_set_writes_nothing(self, mock_cls, tmp_path):
+        client = _mock_blueos_client()
+        client.get_bag.return_value = self._device_bag("fill")
+        mock_cls.return_value = client
+        cfg = tmp_path / "sky1.yaml"
+        cfg.write_text(self.YAML)
+
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
+        assert result.exit_code == 0, result.output
+        client.set_bag.assert_not_called()
+        assert "already set" in result.output
+
+    def test_dry_run_lists_options(self, tmp_path):
+        cfg = tmp_path / "sky1.yaml"
+        cfg.write_text(self.YAML)
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "--dry-run"])
+        assert result.exit_code == 0, result.output
+        assert "VideoPlayer videoFitStyle=fill" in result.output
+
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_download_keeps_widget_options(self, mock_cls, mock_mavlink, tmp_path):
+        mock_cls.return_value = _mock_blueos_client()
+        mock_mavlink.return_value = _mock_mavlink_conn([_make_param_msg("CRUISE_SPEED", 2.0, 0, 1)])
+        (tmp_path / "config").mkdir()
+        (tmp_path / "config" / "blueos.yaml").write_text(self.YAML)
+
+        result = runner.invoke(app, ["config", "download", "192.168.2.2"])
+        assert result.exit_code == 0, result.output
+        data = yaml.safe_load((tmp_path / "config" / "blueos.yaml").read_text())
+        assert data["cockpit_widget_options"] == {"sky1": {"VideoPlayer": {"videoFitStyle": "fill"}}}
