@@ -650,12 +650,14 @@ def _load_base_params(base: Path | None, rover_yaml: Path) -> tuple[Path | None,
         raise typer.Exit(1)
 
 
-def _reboot_and_write(conn: Any, params: dict[str, float]) -> list[str]:
+def _reboot_and_write(conn: Any, params: dict[str, float], reason: str = "") -> list[str]:
     """Reboot the autopilot, wait for it to come back, then write params.
 
     For params that appear only after a reboot (e.g. BATT_VOLT_MULT once
-    BATT_MONITOR is set). Refuses while armed. Returns the names written.
+    BATT_MONITOR is set) and for newly copied Lua scripts. Refuses while
+    armed. Returns the names written.
     """
+    reason = reason or f"apply {', '.join(sorted(params))}"
     from pymavlink import mavutil
 
     from .exceptions import ParameterWriteError
@@ -673,18 +675,37 @@ def _reboot_and_write(conn: Any, params: dict[str, float]) -> list[str]:
     hb = autopilot_heartbeat(5)
     if hb is not None and hb.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED:
         raise ParameterWriteError(
-            f"{', '.join(params)} need an autopilot reboot, but it is armed — "
+            f"the autopilot must reboot to {reason}, but it is armed — "
             "disarm, reboot it and upload again"
         )
-    with console.status(f"Rebooting autopilot to apply {', '.join(sorted(params))}..."):
+    with console.status(f"Rebooting autopilot to {reason}..."):
         reboot_autopilot(conn)
         time.sleep(8)  # let the old heartbeats stop before waiting for new ones
         if autopilot_heartbeat(90) is None:
             raise ParameterWriteError("autopilot did not come back within 90 s after reboot")
         time.sleep(3)  # params load just after the first heartbeat
-        written = write_params(conn, params, include_calibration=True)
-    console.print(f"  Autopilot rebooted; wrote {', '.join(sorted(written))}")
+        written = write_params(conn, params, include_calibration=True) if params else []
+    console.print(
+        "  Autopilot rebooted"
+        + (f"; wrote {', '.join(sorted(written))}" if written else f" to {reason}")
+    )
     return written
+
+
+def _read_param(conn: Any, name: str, timeout: float = 3.0) -> float | None:
+    """Current value of one autopilot param, or None if it doesn't answer."""
+    conn.mav.param_request_read_send(
+        conn.target_system, conn.target_component, name.encode("utf-8"), -1
+    )
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        msg = conn.recv_match(type="PARAM_VALUE", blocking=True, timeout=0.5)
+        if msg is None:
+            continue
+        pid = msg.param_id.decode() if isinstance(msg.param_id, bytes) else msg.param_id
+        if pid.rstrip("\x00") == name:
+            return float(msg.param_value)
+    return None
 
 
 @config_app.command()
@@ -717,6 +738,7 @@ def download(
     """
     import httpx as _httpx
 
+    from .autopilot_scripts import SCRIPTING_PARAMS, SCRIPTS_KEY
     from .battery import BATTERIES_KEY, battery_params, sync_scaling_from_device
     from .blueos_api import BlueOSClient
     from .exceptions import BlueOSConnectionError, MowerProvisionerError, ParamFileError
@@ -775,6 +797,9 @@ def download(
     except ParamFileError as e:
         err_console.print(f"[yellow]Warning: {out_path}: {e}[/yellow]")
         battery_names = set()
+    scripts = existing_yaml.get(SCRIPTS_KEY)
+    if scripts:  # the scripts section owns SCR_ENABLE
+        battery_names |= set(SCRIPTING_PARAMS)
 
     # 2. Fetch autopilot parameters over MAVLink TCP
     params: dict[str, float] = {}
@@ -819,6 +844,8 @@ def download(
         config[COCKPIT_WIDGET_OPTIONS_KEY] = existing_yaml[COCKPIT_WIDGET_OPTIONS_KEY]
     if batteries is not None:
         config[BATTERIES_KEY] = batteries
+    if scripts is not None:
+        config[SCRIPTS_KEY] = scripts
 
     # 4. Save
     save_yaml(config, out_path)
@@ -907,6 +934,7 @@ def upload(
     )
     from .host_config import DNSMASQ_HOST_PATH, WIFI_BANDS
 
+    from .autopilot_scripts import SCRIPTING_PARAMS, SCRIPTS_KEY, load_scripts, sync_scripts
     from .battery import BATTERIES_KEY, PORTS, battery_params, is_port_dependent
     from .exceptions import ParamFileError
 
@@ -950,7 +978,8 @@ def upload(
             + "; ".join(
                 f"{user}: " + ", ".join(
                     f"{comp} {', '.join(f'{k}={v}' for k, v in opts.items())}"
-                    for comp, opts in comps.items() if isinstance(opts, dict)
+                    if isinstance(opts, dict) else f"{comp} ({len(opts)} rule(s))"
+                    for comp, opts in comps.items() if isinstance(opts, (dict, list))
                 )
                 for user, comps in widget_options.items() if isinstance(comps, dict)
             )
@@ -1041,6 +1070,17 @@ def upload(
             f"low {battery[prefix + '_LOW_VOLT']:g} V → {entry.get('low_action', 'none')}, "
             f"critical {battery[prefix + '_CRT_VOLT']:g} V → {entry.get('critical_action', 'none')}"
         )
+    try:
+        scripts = load_scripts(config.get(SCRIPTS_KEY), config_file)
+    except ParamFileError as e:
+        err_console.print(f"[red]{config_file}: {e}[/red]")
+        raise typer.Exit(1)
+    if scripts:
+        battery = {**battery, **SCRIPTING_PARAMS}
+        changes.append(
+            f"  Autopilot Lua scripts: {', '.join(sorted(scripts))} "
+            "(copied to APM/scripts if changed; autopilot reboots to load them)"
+        )
     params = merge_autopilot_params(merge_autopilot_params(base_params, battery), rover_params)
     if params:
         if not include_calibration:
@@ -1053,7 +1093,7 @@ def upload(
             changes.append(
                 f"  Autopilot parameters: {len(params)} "
                 f"(base {len(base_params)}, "
-                + (f"batteries {len(battery)}, " if battery else "")
+                + (f"batteries/scripting {len(battery)}, " if battery else "")
                 + f"rover overrides {overrides}, added {len(rover_params) - overrides})"
             )
         else:
@@ -1308,6 +1348,7 @@ def upload(
         mavlink_device = f"tcp:{host}:{MAVLINK_PORT}"
         try:
             with mavlink_connection(mavlink_device) as conn:
+                scripting_was_on = bool(scripts) and _read_param(conn, "SCR_ENABLE") == 1.0
                 with Progress(
                     SpinnerColumn(),
                     TextColumn("[progress.description]{task.description}"),
@@ -1335,8 +1376,23 @@ def upload(
                             conn, late, include_calibration=True, failed=missing
                         )
                         progress.update(task, completed=len(params))
+                copied: list[str] = []
+                if scripts:
+                    with console.status("Copying Lua scripts to the autopilot..."):
+                        copied = sync_scripts(conn, scripts)
+                    uploaded.append(
+                        f"Lua scripts ({', '.join(copied)} copied)" if copied
+                        else "Lua scripts (unchanged)"
+                    )
+                reasons = []
                 if missing:
-                    written += _reboot_and_write(conn, {k: late[k] for k in missing})
+                    reasons.append(f"apply {', '.join(sorted(missing))}")
+                if copied or (scripts and not scripting_was_on):
+                    reasons.append("load Lua scripts")
+                if reasons:
+                    written += _reboot_and_write(
+                        conn, {k: late[k] for k in missing}, " and ".join(reasons)
+                    )
             uploaded.append(f"autopilot params ({len(written)})")
         except MowerProvisionerError as e:
             err_console.print(f"[yellow]Warning: Could not write autopilot params: {e}[/yellow]")

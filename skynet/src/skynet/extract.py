@@ -306,19 +306,46 @@ class CockpitWidgetOptionsPlan:
     widget_count: int = 0
 
 
-def _set_widget_options(node: Any, by_component: dict[str, dict[str, Any]]) -> int:
+def _widget_rules(spec: Any) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    """(match, set) pairs for one component's entry.
+
+    A mapping sets those options on every widget of the component; a list of
+    ``{match: {...}, set: {...}}`` rules only touches widgets whose options
+    match (a list value in ``match`` means any of those values).
+    """
+    if isinstance(spec, dict):
+        return [({}, spec)] if spec else []
+    rules = []
+    for rule in spec if isinstance(spec, list) else []:
+        if isinstance(rule, dict) and isinstance(rule.get("set"), dict) and rule["set"]:
+            match = rule.get("match")
+            rules.append((match if isinstance(match, dict) else {}, rule["set"]))
+    return rules
+
+
+def _matches(options: dict[str, Any], match: dict[str, Any]) -> bool:
+    return all(
+        options.get(k) in v if isinstance(v, list) else options.get(k) == v
+        for k, v in match.items()
+    )
+
+
+def _set_widget_options(node: Any, by_component: dict[str, Any]) -> int:
     """Apply options to widgets (dicts with ``component`` + ``options``) in place.
 
     Returns how many widgets changed.
     """
     count = 0
     if isinstance(node, dict):
-        wanted = by_component.get(node.get("component"))  # type: ignore[arg-type]
+        rules = _widget_rules(by_component.get(node.get("component")))  # type: ignore[arg-type]
         options = node.get("options")
-        if wanted and isinstance(options, dict):
-            if any(options.get(k) != v for k, v in wanted.items()):
-                options.update(wanted)
-                count += 1
+        if rules and isinstance(options, dict):
+            changed = False
+            for match, wanted in rules:
+                if _matches(options, match) and any(options.get(k) != v for k, v in wanted.items()):
+                    options.update(wanted)
+                    changed = True
+            count += changed
         for value in node.values():
             count += _set_widget_options(value, by_component)
     elif isinstance(node, list):
@@ -350,7 +377,6 @@ def plan_cockpit_widget_options(
         user_settings = settings_root.get(user)
         if not isinstance(user_settings, dict) or not isinstance(by_component, dict):
             continue
-        by_component = {c: o for c, o in by_component.items() if isinstance(o, dict) and o}
         plan = CockpitWidgetOptionsPlan(user=str(user))
         for setting_key, value in user_settings.items():
             updated = copy.deepcopy(value)

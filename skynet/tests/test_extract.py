@@ -572,3 +572,42 @@ class TestPlanCockpitWidgetOptions:
         assert plan_cockpit_widget_options({"other": {"VideoPlayer": {"videoFitStyle": "fill"}}}, bag) == []
         assert plan_cockpit_widget_options(None, bag) == []
         assert plan_cockpit_widget_options({"sky1": {"VideoPlayer": {"videoFitStyle": "fill"}}}, None) == []
+
+
+
+class TestWidgetOptionRules:
+    RULE = {"VeryGenericIndicator": [{
+        "match": {"variableName": ["SCALED_PRESSURE2/temperature", "CubeTempF"]},
+        "set": {"displayName": "Cube Temp", "variableName": "CubeTempF",
+                "variableUnit": "°F", "variableMultiplier": 1},
+    }]}
+
+    @staticmethod
+    def _bag(widgets):
+        return {"cockpit": {"settings": {"sky1": {"profiles": [{"widgets": widgets}]}}}}
+
+    @staticmethod
+    def _generic(name, unit="%"):
+        return {"component": "VeryGenericIndicator",
+                "options": {"displayName": name, "variableName": name, "variableUnit": unit}}
+
+    def test_rule_changes_only_matching_widget(self):
+        from skynet.extract import plan_cockpit_widget_options
+        temp = {"component": "VeryGenericIndicator", "options": {
+            "displayName": "Water Temp", "variableName": "SCALED_PRESSURE2/temperature",
+            "variableUnit": "°C", "variableMultiplier": ".01", "iconName": "mdi-thermometer"}}
+        bag = self._bag([temp, self._generic("PilotGain")])
+        plans = plan_cockpit_widget_options({"sky1": self.RULE}, bag)
+        assert plans[0].widget_count == 1
+        widgets = plans[0].updates["cockpit/settings/sky1/profiles"][0]["widgets"]
+        assert widgets[0]["options"] == {
+            "displayName": "Cube Temp", "variableName": "CubeTempF", "variableUnit": "°F",
+            "variableMultiplier": 1, "iconName": "mdi-thermometer"}
+        assert widgets[1] == self._generic("PilotGain")
+
+    def test_rule_is_idempotent(self):
+        from skynet.extract import plan_cockpit_widget_options
+        done = {"component": "VeryGenericIndicator", "options": {
+            "displayName": "Cube Temp", "variableName": "CubeTempF",
+            "variableUnit": "°F", "variableMultiplier": 1}}
+        assert plan_cockpit_widget_options({"sky1": self.RULE}, self._bag([done])) == []

@@ -1300,7 +1300,7 @@ class TestUploadBatteries:
             return list(params)
 
         mock_write.side_effect = fake_write
-        mock_reboot.side_effect = lambda conn, params: list(params)
+        mock_reboot.side_effect = lambda conn, params, reason="": list(params)
         cfg = tmp_path / "sky1.yaml"
         cfg.write_text(SKY1_BATTERIES_YAML)
 
@@ -1366,3 +1366,74 @@ class TestRebootAndWrite:
         with pytest.raises(ParameterWriteError, match="armed"):
             _reboot_and_write(conn, {"BATT_VOLT_MULT": 18.182})
         mock_reboot.assert_not_called()
+
+
+class TestUploadAutopilotScripts:
+    @staticmethod
+    def _yaml(tmp_path):
+        (tmp_path / "scripts").mkdir()
+        (tmp_path / "scripts" / "cube_temp_f.lua").write_text("return nil\n")
+        cfg = tmp_path / "sky1.yaml"
+        cfg.write_text("hostname: sky1\nautopilot_scripts:\n- scripts/cube_temp_f.lua\n")
+        return cfg
+
+    def test_dry_run_lists_scripts_and_enables_scripting(self, tmp_path):
+        cfg = self._yaml(tmp_path)
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "--dry-run"])
+        assert result.exit_code == 0, result.output
+        assert "Autopilot Lua scripts: cube_temp_f.lua" in result.output
+        assert "SCR_ENABLE = 1.0" in result.output
+
+    def test_missing_script_exits(self, tmp_path):
+        cfg = tmp_path / "sky1.yaml"
+        cfg.write_text("autopilot_scripts:\n- scripts/nope.lua\n")
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "--dry-run"])
+        assert result.exit_code == 1
+        assert "cannot read" in result.output
+
+    @pytest.mark.parametrize("copied, scripting_on, reboots", [
+        (["cube_temp_f.lua"], 1.0, True),    # new script content
+        ([], 0.0, True),                     # scripting just enabled
+        ([], 1.0, False),                    # nothing changed
+    ])
+    @patch("skynet.cli._reboot_and_write")
+    @patch("skynet.autopilot_scripts.sync_scripts")
+    @patch("skynet.cli._read_param")
+    @patch("skynet.cli.write_params")
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_reboot_only_when_needed(
+        self, mock_cls, mock_mavlink, mock_write, mock_read, mock_sync, mock_reboot,
+        copied, scripting_on, reboots, tmp_path,
+    ):
+        mock_cls.return_value = _mock_blueos_client()
+        mock_write.side_effect = lambda conn, params, **kw: list(params)
+        mock_read.return_value = scripting_on
+        mock_sync.return_value = copied
+        mock_reboot.return_value = []
+        cfg = self._yaml(tmp_path)
+
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
+        assert result.exit_code == 0, result.output
+        assert mock_sync.call_args.args[1] == {"cube_temp_f.lua": b"return nil\n"}
+        assert mock_reboot.called is reboots
+        if reboots:
+            assert "load Lua scripts" in mock_reboot.call_args.args[2]
+
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_download_keeps_scripts_and_drops_scr_enable(self, mock_cls, mock_mavlink, tmp_path):
+        mock_cls.return_value = _mock_blueos_client()
+        mock_mavlink.return_value = _mock_mavlink_conn([
+            _make_param_msg("SCR_ENABLE", 1.0, 0, 2),
+            _make_param_msg("CRUISE_SPEED", 2.0, 1, 2),
+        ])
+        (tmp_path / "config").mkdir()
+        out = tmp_path / "config" / "blueos.yaml"
+        out.write_text("autopilot_scripts:\n- scripts/cube_temp_f.lua\n")
+
+        result = runner.invoke(app, ["config", "download", "192.168.2.2"])
+        assert result.exit_code == 0, result.output
+        data = yaml.safe_load(out.read_text())
+        assert data["autopilot_scripts"] == ["scripts/cube_temp_f.lua"]
+        assert "SCR_ENABLE" not in data["autopilot_params"]

@@ -55,3 +55,7 @@ class FrameMismatchError(GpsSimError):
 
 class GnssReceiverError(MowerProvisionerError):
     """Error talking to a USB-attached GNSS receiver."""
+
+
+class AutopilotFileError(MowerProvisionerError):
+    """Copying a file to or from the autopilot's SD card (MAVFTP) failed."""
