@@ -33,6 +33,26 @@ bag:
   major_tom:
     token: f720c0e370f48e73b93eb4f62b20ac379fc12373
     inventory_url: https://blueos.cloud/
+  # Cockpit (v1.17.0) per-user settings, stored at cockpit/settings/<user>/<key>.
+  # A slash-separated key sets only that one setting (BlueOS bag uses dpath.new),
+  # so Cockpit's other settings and layouts on the vehicle are left alone.
+  # Cockpit prefers the BlueOS value on conflict; it asks when the same user
+  # reconnects to the same vehicle with a different local value.
+  cockpit/settings/sky1/cockpit-custom-rtc-config:
+    enabled: true
+    data:
+      bundlePolicy: max-bundle
+      # RTCIceServer objects; bare "stun:..." strings make new RTCPeerConnection() throw
+      iceServers:
+      - urls: stun:stun.l.google.com:19302
+  cockpit/settings/sky1/cockpit-streams-correspondency:
+  - name: front           # Cockpit's internal stream name (video widgets select this)
+    externalId: front     # mavlink-camera-manager stream name (video_streams below)
+  # Auto-fetch pins the allowed ICE IPs to one vehicle address (it picked eth1's
+  # 192.168.10.1, the camera subnet), so browsers on NetBird/LAN get no reachable
+  # candidate and ICE fails. Empty list = accept every candidate MCM offers.
+  cockpit/settings/sky1/cockpit-enable-auto-ice-ip-fetch: false
+  cockpit/settings/sky1/cockpit-allowed-stream-ips: []
 network:
   ethernet:
   - name: eth0
@@ -74,4 +94,19 @@ mediamtx:
         source: rtsp://192.168.10.2:5005/routecam
         sourceProtocol: udp
         sourceOnDemand: false
+        # The camera's H.265 SPS has no VUI timing (its 60 fps is only in the VPS),
+        # and mavlink-camera-manager refuses caps without a framerate. Republish
+        # with the timing written into the SPS — header rewrite only, no re-encode.
+        runOnReady: >-
+          ffmpeg -hide_banner -loglevel error -rtsp_transport tcp
+          -i rtsp://localhost:8555/front -c copy -bsf:v hevc_metadata=tick_rate=60/1
+          -rtsp_transport tcp -f rtsp rtsp://localhost:8555/front_cockpit
+        runOnReadyRestart: true
+      front_cockpit:
+        source: publisher
+video_streams:   # mavlink-camera-manager streams; Cockpit plays these over WebRTC
+- name: front
+  source: Redirect   # relay the MediaMTX path below, so MediaMTX stays the camera's only client
+  endpoints:
+  - rtsp://127.0.0.1:8555/front_cockpit
 autopilot_params: {}   # sky1 uses autopilot_base.yaml as-is; add overrides here

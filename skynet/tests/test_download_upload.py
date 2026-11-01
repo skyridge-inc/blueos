@@ -1006,3 +1006,119 @@ class TestAutopilotStartAndHotplug:
         assert result.exit_code == 0, result.output
         client.run_host_command.assert_not_called()
         client.start_autopilot.assert_not_called()
+
+
+class TestUploadVideoStreams:
+    FRONT = {"name": "front", "source": "Redirect", "endpoints": ["rtsp://127.0.0.1:8555/front"]}
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_creates_missing_stream(self, mock_cls, tmp_path):
+        client = _mock_blueos_client()
+        client.get_video_streams.return_value = []
+        client.add_video_stream.return_value = True
+        mock_cls.return_value = client
+        cfg = tmp_path / "rover.yaml"
+        cfg.write_text(yaml.dump({"video_streams": [self.FRONT]}))
+
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
+        assert result.exit_code == 0, result.output
+        body = client.add_video_stream.call_args[0][0]
+        assert body["name"] == "front"
+        assert body["stream_information"]["configuration"] == {"type": "redirect"}
+        assert "video streams (1)" in result.output
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_skips_existing_stream(self, mock_cls, tmp_path):
+        client = _mock_blueos_client()
+        client.get_video_streams.return_value = [{"video_and_stream": {"name": "front"}}]
+        mock_cls.return_value = client
+        cfg = tmp_path / "rover.yaml"
+        cfg.write_text(yaml.dump({"video_streams": [self.FRONT]}))
+
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
+        assert result.exit_code == 0, result.output
+        client.add_video_stream.assert_not_called()
+        assert "already on device" in result.output
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_dry_run_creates_nothing(self, mock_cls, tmp_path):
+        client = _mock_blueos_client()
+        mock_cls.return_value = client
+        cfg = tmp_path / "rover.yaml"
+        cfg.write_text(yaml.dump({"video_streams": [self.FRONT]}))
+
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "--dry-run"])
+        assert result.exit_code == 0, result.output
+        assert "rtsp://127.0.0.1:8555/front" in result.output
+        client.add_video_stream.assert_not_called()
+
+
+class TestUploadCockpitStreamRename:
+    KEY = "cockpit/settings/sky1/cockpit-streams-correspondency"
+    PROFILES_KEY = "cockpit/settings/sky1/cockpit-saved-profiles-v8"
+
+    @staticmethod
+    def _device_bag():
+        widgets = [{"options": {"internalStreamName": "Stream 1"}} for _ in range(2)]
+        return {"cockpit": {"settings": {"sky1": {
+            "cockpit-streams-correspondency": [{"name": "Stream 1", "externalId": "front"}],
+            "cockpit-saved-profiles-v8": [{"views": [{"widgets": widgets}]}],
+        }}}}
+
+    def _write_cfg(self, tmp_path):
+        cfg = tmp_path / "rover.yaml"
+        cfg.write_text(yaml.dump({"bag": {self.KEY: [{"name": "front", "externalId": "front"}]}}))
+        return cfg
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_repoints_widgets_before_renaming(self, mock_cls, tmp_path):
+        client = _mock_blueos_client()
+        client.get_bag.return_value = self._device_bag()
+        mock_cls.return_value = client
+
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(self._write_cfg(tmp_path)), "-y"])
+        assert result.exit_code == 0, result.output
+
+        keys = [c.args[0] for c in client.set_bag.call_args_list]
+        assert keys == [self.PROFILES_KEY, self.KEY]   # widgets first, then the rename
+        profiles = client.set_bag.call_args_list[0].args[1]
+        names = [w["options"]["internalStreamName"] for w in profiles[0]["views"][0]["widgets"]]
+        assert names == ["front", "front"]
+        assert "2 widgets re-pointed" in result.output
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_failed_widget_update_keeps_old_name(self, mock_cls, tmp_path):
+        client = _mock_blueos_client()
+        client.get_bag.return_value = self._device_bag()
+        client.set_bag.side_effect = lambda key, value: key != self.PROFILES_KEY
+        mock_cls.return_value = client
+
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(self._write_cfg(tmp_path)), "-y"])
+        assert result.exit_code == 0, result.output
+        keys = [c.args[0] for c in client.set_bag.call_args_list]
+        assert self.KEY not in keys
+        assert "keeping its stream names" in " ".join(result.output.split())
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_unreadable_bag_skips_rename(self, mock_cls, tmp_path):
+        client = _mock_blueos_client()
+        client.get_bag.return_value = None
+        mock_cls.return_value = client
+
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(self._write_cfg(tmp_path)), "-y"])
+        assert result.exit_code == 0, result.output
+        client.set_bag.assert_not_called()
+        assert "Cannot read Cockpit settings" in result.output
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_dry_run_mentions_rename_without_contacting_device(self, mock_cls, tmp_path):
+        client = _mock_blueos_client()
+        mock_cls.return_value = client
+
+        result = runner.invoke(
+            app, ["config", "upload", "192.168.2.2", str(self._write_cfg(tmp_path)), "--dry-run"],
+        )
+        assert result.exit_code == 0, result.output
+        assert "Cockpit stream names: sky1" in result.output
+        client.get_bag.assert_not_called()
+        client.set_bag.assert_not_called()

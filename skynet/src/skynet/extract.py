@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import copy
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -67,6 +70,81 @@ def push_mediamtx_config(
     return client.put_file(config_path, content)
 
 
+# mavlink-camera-manager's source string for a stream that relays an RTSP URL
+# (the URL is the stream's first endpoint).
+REDIRECT_SOURCE = "Redirect"
+
+
+def _video_source_string(video_source: Any) -> str | None:
+    """Recover the POST `source` string from MCM's serialized video_source.
+
+    video_source is an externally tagged enum, e.g.
+    {"Redirect": {"name": ..., "source": {"Redirect": "Redirect"}}} or
+    {"Local": {"name": ..., "device_path": "/dev/video0", ...}}.
+    """
+    if not isinstance(video_source, dict) or len(video_source) != 1:
+        return None
+    kind, inner = next(iter(video_source.items()))
+    if kind == REDIRECT_SOURCE:
+        return REDIRECT_SOURCE
+    if not isinstance(inner, dict):
+        return None
+    if isinstance(inner.get("device_path"), str):
+        return inner["device_path"]
+    source = inner.get("source")
+    if isinstance(source, dict) and len(source) == 1:
+        value = next(iter(source.values()))
+        if isinstance(value, str):
+            return value
+    return None
+
+
+def fetch_video_streams(client: BlueOSClient) -> list[dict[str, Any]] | None:
+    """Fetch mavlink-camera-manager streams as provisionable YAML entries.
+
+    Each entry is {name, source, endpoints} plus, for non-redirect sources,
+    the capture configuration. Redirect streams omit it: MCM replaces it
+    with what it probes from the URL, so it isn't provisioning data.
+    """
+    raw = client.get_video_streams()
+    if not isinstance(raw, list):
+        return None
+    streams: list[dict[str, Any]] = []
+    for status in raw:
+        vs = status.get("video_and_stream") if isinstance(status, dict) else None
+        if not isinstance(vs, dict):
+            continue
+        info = vs.get("stream_information") or {}
+        source = _video_source_string(vs.get("video_source"))
+        if not vs.get("name") or source is None:
+            continue
+        entry: dict[str, Any] = {
+            "name": vs["name"],
+            "source": source,
+            "endpoints": list(info.get("endpoints") or []),
+        }
+        if source != REDIRECT_SOURCE and info.get("configuration"):
+            entry["configuration"] = info["configuration"]
+        if info.get("extended_configuration"):
+            entry["extended_configuration"] = info["extended_configuration"]
+        streams.append(entry)
+    return streams
+
+
+def video_stream_post_body(entry: dict[str, Any]) -> dict[str, Any]:
+    """Build the mavlink-camera-manager POST /streams body for a YAML entry."""
+    configuration = entry.get("configuration")
+    if configuration is None and entry.get("source") == REDIRECT_SOURCE:
+        configuration = {"type": "redirect"}
+    info: dict[str, Any] = {
+        "endpoints": list(entry.get("endpoints") or []),
+        "configuration": configuration,
+    }
+    if entry.get("extended_configuration"):
+        info["extended_configuration"] = entry["extended_configuration"]
+    return {"name": entry["name"], "source": entry["source"], "stream_information": info}
+
+
 def extract_hostname_from_url(url: str) -> str:
     """Extract domain/host from URL for use as filename."""
     parsed = urlparse(url)
@@ -114,6 +192,106 @@ def _clean_bag(raw: dict[str, Any] | None) -> dict[str, Any] | None:
     if raw is None:
         return None
     return {k: v for k, v in raw.items() if k not in _BAG_EXCLUDE_KEYS}
+
+
+# -- Cockpit stream renames --
+#
+# Cockpit (v1.17.x) keeps per-user settings in the bag at
+# cockpit/settings/<user>/<key>. ``cockpit-streams-correspondency`` maps an
+# internal stream name (what video widgets select via
+# ``options.internalStreamName``) to a mavlink-camera-manager stream
+# (``externalId``). Renaming an internal name alone leaves every widget
+# pointing at a name that no longer exists, so the widgets are re-pointed too.
+
+COCKPIT_CORRESPONDENCY_KEY = "cockpit-streams-correspondency"
+COCKPIT_CORRESPONDENCY_BAG_KEY = re.compile(
+    rf"^cockpit/settings/(?P<user>[^/]+)/{COCKPIT_CORRESPONDENCY_KEY}$"
+)
+
+
+@dataclass
+class CockpitStreamRenamePlan:
+    """Widget updates needed before a user's stream correspondency is replaced."""
+
+    user: str
+    renames: dict[str, str]                                   # old internal name -> new
+    updates: dict[str, Any] = field(default_factory=dict)     # bag key -> new setting value
+    widget_count: int = 0
+
+
+def _internal_names_by_external_id(correspondency: Any) -> dict[str, str]:
+    if not isinstance(correspondency, list):
+        return {}
+    return {
+        str(c["externalId"]): str(c["name"])
+        for c in correspondency
+        if isinstance(c, dict) and c.get("externalId") is not None and c.get("name") is not None
+    }
+
+
+def _repoint_widgets(node: Any, renames: dict[str, str]) -> int:
+    """Rewrite ``internalStreamName`` values in place; returns how many changed."""
+    count = 0
+    if isinstance(node, dict):
+        name = node.get("internalStreamName")
+        if isinstance(name, str) and name in renames:
+            node["internalStreamName"] = renames[name]
+            count += 1
+        for value in node.values():
+            count += _repoint_widgets(value, renames)
+    elif isinstance(node, list):
+        for item in node:
+            count += _repoint_widgets(item, renames)
+    return count
+
+
+def plan_cockpit_stream_renames(
+    bag_config: dict[str, Any], device_bag: dict[str, Any] | None,
+) -> list[CockpitStreamRenamePlan]:
+    """Work out which Cockpit widgets to re-point for the YAML's stream renames.
+
+    For each ``cockpit/settings/<user>/cockpit-streams-correspondency`` key in
+    the YAML bag, compares it with the device's current correspondency by
+    ``externalId``. Every other setting of that user that holds a renamed
+    ``internalStreamName`` is returned as an updated copy, keyed by its bag path.
+    Users with no rename get no plan.
+    """
+    settings_root = (device_bag or {}).get("cockpit", {})
+    settings_root = settings_root.get("settings", {}) if isinstance(settings_root, dict) else {}
+    if not isinstance(settings_root, dict):
+        return []
+
+    plans: list[CockpitStreamRenamePlan] = []
+    for key, new_correspondency in bag_config.items():
+        match = COCKPIT_CORRESPONDENCY_BAG_KEY.match(str(key))
+        if not match:
+            continue
+        user = match["user"]
+        user_settings = settings_root.get(user)
+        if not isinstance(user_settings, dict):
+            continue
+
+        old_names = _internal_names_by_external_id(user_settings.get(COCKPIT_CORRESPONDENCY_KEY))
+        new_names = _internal_names_by_external_id(new_correspondency)
+        renames = {
+            old: new_names[ext]
+            for ext, old in old_names.items()
+            if ext in new_names and new_names[ext] != old
+        }
+        if not renames:
+            continue
+
+        plan = CockpitStreamRenamePlan(user=user, renames=renames)
+        for setting_key, value in user_settings.items():
+            if setting_key == COCKPIT_CORRESPONDENCY_KEY:
+                continue
+            updated = copy.deepcopy(value)
+            changed = _repoint_widgets(updated, renames)
+            if changed:
+                plan.updates[f"cockpit/settings/{user}/{setting_key}"] = updated
+                plan.widget_count += changed
+        plans.append(plan)
+    return plans
 
 
 def fetch_dhcp_reservations(client: BlueOSClient) -> list[dict[str, Any]] | None:
@@ -181,6 +359,9 @@ def extract_config(client: BlueOSClient) -> dict[str, Any]:
         "hotspot": client.get_hotspot(),
         "dhcp_reservations": fetch_dhcp_reservations(client),
     }
+
+    # Camera-manager streams — what Cockpit's video widget can play over WebRTC
+    config["video_streams"] = fetch_video_streams(client)
 
     # Host udev/systemd hook that starts the autopilot when a board is plugged in
     config["autopilot_autostart"] = fetch_autopilot_autostart(client)

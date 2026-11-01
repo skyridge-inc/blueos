@@ -130,11 +130,13 @@ autopilot_params:
   offline, the file keeps its existing `autopilot_params`, and a new file gets none.
 - `--base PATH` picks a different base file. With no base file, both commands behave as before.
 
-**Deadman and E-stop:** the base sets ch5 as a hold-to-run switch (released → Hold) and
-`BTN_*` feedback from the safety chain (open → Hold + disarm). With the mixed-mode track
-controller, ArduPilot E-stop and disarm do not stop steering, so the primary stop is a hardware
-safety chain. Read [`docs/DEADMAN.md`](docs/DEADMAN.md) ([wiring](docs/safety-chain.svg),
-[coverage](docs/stop-coverage.svg)) before field use; reboot the Cube after uploading the base.
+**Deadman and E-stop:** the base sets ch5 as a hold-to-run switch (released → Hold), and the RC
+failsafe to Hold. The E-stops cut the receiver's power, so the RC failsafe doubles as E-stop
+feedback. With the mixed-mode track controller, ArduPilot E-stop and disarm do not stop steering,
+so the primary stop is hardware: the deadman relay and wireless E-stop sit in series with the
+rover's E-stop on its 12 V and 24 V leads. Read [`docs/DEADMAN.md`](docs/DEADMAN.md)
+([wiring](docs/safety-chain.svg), [coverage](docs/stop-coverage.svg)) before field use; reboot the
+Cube after uploading the base.
 
 To change a param for the whole fleet, edit `autopilot_base.yaml`. Calibration params
 (`CALIBRATION_PARAMS`) are vehicle-specific and don't belong in the base.

@@ -741,6 +741,8 @@ def download(
     mediamtx = config.get("mediamtx")
     console.print(f"[green]Downloaded to {out_path}[/green]")
     console.print(f"  BlueOS extensions: {ext_count}")
+    if config.get("video_streams") is not None:
+        console.print(f"  Video streams: {len(config['video_streams'])}")
     if params and base_path is not None:
         console.print(
             f"  Autopilot parameters: {len(params)} read, "
@@ -799,7 +801,14 @@ def upload(
 
     from .blueos_api import BlueOSClient
     from .exceptions import BlueOSConnectionError, MowerProvisionerError
-    from .extract import load_yaml, merge_autopilot_params, push_mediamtx_config
+    from .extract import (
+        COCKPIT_CORRESPONDENCY_BAG_KEY,
+        load_yaml,
+        merge_autopilot_params,
+        plan_cockpit_stream_renames,
+        push_mediamtx_config,
+        video_stream_post_body,
+    )
     from .host_config import DNSMASQ_HOST_PATH, WIFI_BANDS
 
     config = load_yaml(config_file)
@@ -814,6 +823,14 @@ def upload(
     bag = config.get("bag")
     if bag and isinstance(bag, dict):
         changes.append(f"  Bag entries: {len(bag)}")
+    cockpit_rename_users = [
+        m["user"] for k in (bag or {}) if (m := COCKPIT_CORRESPONDENCY_BAG_KEY.match(str(k)))
+    ] if isinstance(bag, dict) else []
+    if cockpit_rename_users:
+        changes.append(
+            f"  Cockpit stream names: {', '.join(cockpit_rename_users)}"
+            " (video widgets re-pointed to any renamed stream)"
+        )
     extensions = [
         e for e in (config.get("extensions") or [])
         if isinstance(e, dict) and e.get("identifier") and e.get("tag")
@@ -826,6 +843,15 @@ def upload(
     mediamtx = config.get("mediamtx")
     if mediamtx and isinstance(mediamtx, dict) and mediamtx.get("config"):
         changes.append(f"  MediaMTX config: {mediamtx.get('config_path', 'unknown path')}")
+    video_streams = [
+        s for s in (config.get("video_streams") or [])
+        if isinstance(s, dict) and s.get("name") and s.get("source")
+    ]
+    if video_streams:
+        changes.append(
+            f"  Video streams: {', '.join(str(s['name']) for s in video_streams)}"
+            " (missing ones created in mavlink-camera-manager)"
+        )
     network = config.get("network")
     if not isinstance(network, dict):
         network = {}
@@ -902,6 +928,12 @@ def upload(
 
     if dry_run:
         console.print("[yellow]DRY RUN — no changes will be made.[/yellow]")
+        if video_streams:
+            console.print("\n[bold]Video streams:[/bold]")
+            for s in video_streams:
+                console.print(
+                    f"  {s['name']}: {s['source']} {' '.join(s.get('endpoints') or [])}"
+                )
         if isinstance(reservations, list) and reservations:
             console.print("\n[bold]DHCP reservations:[/bold]")
             for r in reservations:
@@ -953,9 +985,44 @@ def upload(
                     else:
                         err_console.print("[yellow]Warning: Failed to set vehicle name[/yellow]")
 
+                # Re-point Cockpit video widgets before their stream's internal
+                # name is replaced; this needs the device's current names, which
+                # the bag write below overwrites. A user whose widgets could not
+                # be updated keeps the old names so nothing is left dangling.
+                skip_bag_keys: set[str] = set()
+                if cockpit_rename_users:
+                    device_bag = client.get_bag()
+                    if device_bag is None:
+                        err_console.print(
+                            "[yellow]Warning: Cannot read Cockpit settings from the device — "
+                            "stream names left unchanged[/yellow]"
+                        )
+                        skip_bag_keys = {
+                            k for k in bag if COCKPIT_CORRESPONDENCY_BAG_KEY.match(str(k))
+                        }
+                    for plan in plan_cockpit_stream_renames(bag, device_bag):
+                        failed = [k for k, v in plan.updates.items() if not client.set_bag(k, v)]
+                        names = ", ".join(f"'{o}' → '{n}'" for o, n in plan.renames.items())
+                        if failed:
+                            skip_bag_keys.add(
+                                f"cockpit/settings/{plan.user}/cockpit-streams-correspondency"
+                            )
+                            err_console.print(
+                                f"[yellow]Warning: Failed to re-point Cockpit widgets in "
+                                f"{', '.join(failed)}; user '{plan.user}' is keeping its "
+                                f"stream names[/yellow]"
+                            )
+                        else:
+                            console.print(
+                                f"  Cockpit user '{plan.user}': {names} "
+                                f"({plan.widget_count} widgets re-pointed)"
+                            )
+
                 if bag and isinstance(bag, dict):
                     bag_ok = 0
                     for key, value in bag.items():
+                        if key in skip_bag_keys:
+                            continue
                         if client.set_bag(key, value):
                             bag_ok += 1
                         else:
@@ -992,6 +1059,27 @@ def upload(
                         uploaded.append("mediamtx config")
                     else:
                         err_console.print("[yellow]Warning: Failed to push MediaMTX config[/yellow]")
+
+                # Create camera-manager streams by name; existing ones are left alone
+                if video_streams:
+                    existing_streams = {
+                        (s.get("video_and_stream") or {}).get("name")
+                        for s in (client.get_video_streams() or [])
+                        if isinstance(s, dict)
+                    }
+                    stream_ok = 0
+                    for s in video_streams:
+                        if s["name"] in existing_streams:
+                            console.print(f"  Video stream '{s['name']}' already on device — skipping")
+                            stream_ok += 1
+                        elif client.add_video_stream(video_stream_post_body(s)):
+                            stream_ok += 1
+                        else:
+                            err_console.print(
+                                f"[yellow]Warning: Failed to create video stream '{s['name']}'[/yellow]"
+                            )
+                    if stream_ok:
+                        uploaded.append(f"video streams ({stream_ok})")
 
                 current_modes: dict[tuple[str, str], str] = {}
                 if static_ips or dhcp_servers:

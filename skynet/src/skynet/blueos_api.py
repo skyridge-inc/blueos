@@ -231,6 +231,16 @@ class BlueOSClient:
             timeout=httpx.Timeout(timeout),
         )
 
+    # -- Video streams (mavlink-camera-manager) --
+
+    def get_video_streams(self) -> list[Any] | None:
+        """List the streams mavlink-camera-manager serves (Cockpit's video source)."""
+        return self._get_json("/mavlink-camera-manager/streams")
+
+    def add_video_stream(self, stream: dict[str, Any]) -> bool:
+        """Create a stream; MCM saves it and starts it on every boot."""
+        return self._post("/mavlink-camera-manager/streams", json=stream)
+
     # -- Host access (Commander) --
 
     def run_host_command(self, command: str) -> dict[str, Any] | None:

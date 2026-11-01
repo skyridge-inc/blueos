@@ -1,155 +1,278 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 820" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 1320" font-family="Segoe UI, Helvetica, Arial, sans-serif">
   <defs>
     <marker id="arR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="12" markerHeight="12" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#d6452f"/></marker>
     <marker id="arB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="12" markerHeight="12" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
     <marker id="arP" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7c3aed"/></marker>
+    <marker id="arK" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#334155"/></marker>
     <style>
-      .box{fill:#f8fafc;stroke:#334155;stroke-width:1.6}
-      .key{fill:#eef6ff;stroke:#1e40af;stroke-width:2}
-      .stop{fill:#fef2f2;stroke:#dc2626;stroke-width:2}
       .t{font-size:15px;font-weight:700;fill:#0f172a}
       .s{font-size:12px;fill:#334155}
-      .w{font-size:12px;font-weight:700;fill:#b45309}
+      .w{font-size:11px;font-weight:700;fill:#b45309}
       .lbl{font-size:11px;fill:#475569}
+      .h{font-size:16px;font-weight:700}
       .pwr{stroke:#d6452f;stroke-width:3;fill:none}
+      .gnd{stroke:#334155;stroke-width:3;fill:none}
       .dat{stroke:#2563eb;stroke-width:2.5;fill:none}
       .wifi{stroke:#16a34a;stroke-width:2.5;fill:none;stroke-dasharray:7 5}
       .ctl{stroke:#7c3aed;stroke-width:2;fill:none;stroke-dasharray:4 4}
-      .fuse{fill:#fff7ed;stroke:#c2410c;stroke-width:1.2}
     </style>
   </defs>
-
-  <rect width="1200" height="820" fill="#ffffff"/>
-  <text x="20" y="34" font-size="22" font-weight="700" fill="#0f172a">Safety chain: E-stop + deadman, energise to run</text>
-  <text x="20" y="58" class="s">Every device in the coil circuit must be closed for safety relay K1 to pull in. Any one opens, or power or a wire is lost: K1 drops, tracks and blades are disabled, and the Cube goes to Hold + disarmed.</text>
-
-  <!-- Radios -->
-  <rect x="430" y="82" width="210" height="72" rx="8" class="stop"/>
-  <text x="442" y="104" class="t">Wireless E-stop handheld</text>
-  <text x="442" y="122" class="lbl">separate radio and battery</text>
-  <text x="442" y="138" class="lbl">latching red button, held by the observer</text>
-  <path d="M535,154 V228" class="wifi"/>
-  <text x="543" y="196" class="lbl">heartbeat</text>
-
-  <rect x="665" y="82" width="205" height="72" rx="8" class="box"/>
-  <text x="677" y="104" class="t">RC receiver</text>
-  <text x="677" y="122" class="lbl">SBUS → Cube RCIN</text>
-  <text x="677" y="138" class="lbl">ch5 PWM → deadman relay</text>
-  <path d="M767,154 V228" class="ctl" marker-end="url(#arP)"/>
-  <text x="775" y="196" class="lbl">ch5 PWM</text>
-
-  <rect x="920" y="82" width="260" height="72" rx="8" class="box"/>
-  <text x="932" y="104" class="t">RC transmitter (driver)</text>
-  <text x="932" y="122" class="lbl">ch1 throttle, ch2 steer, ch8 mode</text>
-  <text x="932" y="138" class="lbl">ch5 momentary switch = deadman</text>
-  <path d="M920,112 H872" class="wifi"/>
-
-  <!-- Coil circuit -->
-  <text x="20" y="218" font-size="13" font-weight="700" fill="#0f172a">K1 coil circuit: all in series</text>
-  <rect x="20" y="230" width="140" height="80" rx="8" class="box"/>
-  <text x="32" y="254" class="t">Coil supply</text>
-  <text x="32" y="274" class="s">12/24 V, own</text>
-  <text x="32" y="290" class="s">fused branch</text>
-  <line x1="160" y1="270" x2="213" y2="270" class="pwr"/>
-  <rect x="171" y="261" width="30" height="18" rx="3" class="fuse"/>
-
-  <rect x="215" y="230" width="185" height="80" rx="8" class="stop"/>
-  <text x="227" y="254" class="t">Rover E-stop button</text>
-  <text x="227" y="274" class="s">NC, latching mushroom</text>
-  <text x="227" y="290" class="s">twist to reset</text>
-  <line x1="400" y1="270" x2="428" y2="270" class="pwr" marker-end="url(#arR)"/>
-
-  <rect x="430" y="230" width="210" height="80" rx="8" class="stop"/>
-  <text x="442" y="254" class="t">Wireless E-stop receiver</text>
-  <text x="442" y="274" class="s">NO relay, closed on heartbeat</text>
-  <text x="442" y="290" class="s">opens &lt; 0.5 s, latches</text>
-  <line x1="640" y1="270" x2="663" y2="270" class="pwr" marker-end="url(#arR)"/>
-
-  <rect x="665" y="230" width="205" height="80" rx="8" class="key"/>
-  <text x="677" y="254" class="t">Deadman relay</text>
-  <text x="677" y="274" class="s">RC switch module, NO</text>
-  <text x="677" y="290" class="s">closed only while ch5 held</text>
-  <line x1="870" y1="270" x2="908" y2="270" class="pwr" marker-end="url(#arR)"/>
-
-  <rect x="910" y="230" width="150" height="80" rx="8" class="key"/>
-  <text x="922" y="254" class="t">K1 safety relay</text>
-  <text x="922" y="274" class="s">coil; 4 NO contacts</text>
-  <text x="922" y="290" class="s">K1a, K1b, K1c, K1d</text>
-  <line x1="1060" y1="270" x2="1110" y2="270" class="pwr"/>
-  <line x1="1110" y1="270" x2="1110" y2="286" stroke="#334155" stroke-width="2"/>
-  <line x1="1096" y1="286" x2="1124" y2="286" stroke="#334155" stroke-width="2"/>
-  <line x1="1101" y1="292" x2="1119" y2="292" stroke="#334155" stroke-width="2"/>
-  <line x1="1106" y1="298" x2="1114" y2="298" stroke="#334155" stroke-width="2"/>
-  <text x="1130" y="292" class="lbl">GND</text>
-
-  <!-- K1 contacts -->
-  <path d="M985,310 V372" class="ctl"/>
-  <path d="M140,372 H1040" class="ctl"/>
-  <text x="600" y="366" class="lbl">K1 contacts move together: closed only while the coil is energised</text>
-  <path d="M140,372 V398" class="ctl" marker-end="url(#arP)"/>
-  <path d="M410,372 V398" class="ctl" marker-end="url(#arP)"/>
-  <path d="M685,372 V398" class="ctl" marker-end="url(#arP)"/>
-  <path d="M1040,372 V398" class="ctl" marker-end="url(#arP)"/>
-
-  <rect x="20" y="400" width="240" height="50" rx="6" class="box"/>
-  <text x="32" y="421" class="t">K1a</text><text x="72" y="421" class="s">NO contact</text>
-  <text x="32" y="439" class="lbl">closes the track controller ENABLE</text>
-  <rect x="290" y="400" width="240" height="50" rx="6" class="box"/>
-  <text x="302" y="421" class="t">K1b</text><text x="342" y="421" class="s">NO contact</text>
-  <text x="302" y="439" class="lbl">closes the blade controller ENABLE</text>
-  <rect x="560" y="400" width="250" height="50" rx="6" class="box"/>
-  <text x="572" y="421" class="t">K1c</text><text x="612" y="421" class="s">optional</text>
-  <text x="572" y="439" class="lbl">drives a DC contactor on motor power</text>
-  <rect x="905" y="400" width="275" height="50" rx="6" class="box"/>
-  <text x="917" y="421" class="t">K1d</text><text x="957" y="421" class="s">NO contact to GND</text>
-  <text x="917" y="439" class="lbl">grounds Cube AUX OUT 1 + 2 while closed</text>
-
-  <path d="M140,450 V538" class="pwr" marker-end="url(#arR)"/>
-  <path d="M410,450 V538" class="pwr" marker-end="url(#arR)"/>
-  <path d="M685,450 V538" class="pwr" marker-end="url(#arR)"/>
-  <path d="M1040,450 V538" class="ctl" marker-end="url(#arP)"/>
-
-  <!-- Loads -->
-  <rect x="20" y="540" width="240" height="90" rx="8" class="box"/>
-  <text x="32" y="564" class="t">Track motor controller</text>
-  <text x="32" y="584" class="s">ENABLE ← K1a</text>
-  <text x="32" y="600" class="s">ch1/ch2 ← Cube OUT1/OUT2</text>
-  <text x="32" y="618" class="lbl">mixed mode, 1500 µs = stop</text>
-  <rect x="290" y="540" width="240" height="90" rx="8" class="box"/>
-  <text x="302" y="564" class="t">Blade motor controller</text>
-  <text x="302" y="584" class="s">ENABLE ← K1b</text>
-  <text x="302" y="600" class="s">blades stop with the tracks</text>
-  <text x="302" y="618" class="lbl">usually the bigger hazard</text>
-  <rect x="560" y="540" width="250" height="90" rx="8" class="box"/>
-  <text x="572" y="564" class="t">Motor power contactor</text>
-  <text x="572" y="584" class="s">optional, DC-rated, driven by K1c</text>
-  <text x="572" y="600" class="s">size for the stall current</text>
-  <text x="572" y="618" class="lbl">follow the controller manual on regen</text>
-  <rect x="905" y="540" width="275" height="90" rx="8" class="key"/>
-  <text x="917" y="564" class="t">Cube Orange+</text>
-  <text x="917" y="584" class="s">AUX OUT 1+2 jumpered ← K1d</text>
-  <text x="917" y="600" class="s">open: Hold (BTN_FUNC1=54)</text>
-  <text x="917" y="618" class="s">+ Disarm (BTN_FUNC2=81)</text>
-
-  <path d="M870,142 H893 V604 H903" class="dat" marker-end="url(#arB)"/>
-  <text x="887" y="500" class="lbl" text-anchor="end">SBUS</text>
-  <path d="M1040,630 V660 H140 V632" class="ctl" marker-end="url(#arP)"/>
-  <text x="600" y="654" class="lbl" text-anchor="middle">Cube OUT1 = throttle, OUT2 = steer (PWM); Hold sends 1500 on both</text>
-
-  <!-- Notes -->
-  <rect x="20" y="690" width="565" height="118" rx="8" fill="#fef2f2" stroke="#dc2626"/>
-  <text x="32" y="712" font-size="13" font-weight="700" fill="#991b1b">Fail-safe by design</text>
-  <text x="32" y="732" class="s">• Energise to run: lost coil power, a broken wire or a failed relay all stop.</text>
-  <text x="32" y="750" class="s">• RC receiver failsafe: "no pulses" (or ch5 = released), never "hold last".</text>
-  <text x="32" y="768" class="s">• E-stops latch. After a reset the Cube is in Manual + disarmed: re-arm on purpose.</text>
-  <text x="32" y="786" class="s">• Slopes: unpowered tracks may freewheel; add spring-applied brakes if needed.</text>
-  <text x="32" y="802" class="w">Cut controller ENABLE inputs first; cutting battery power is optional (K1c).</text>
-
-  <rect x="605" y="690" width="575" height="118" rx="8" fill="#eef6ff" stroke="#1e40af"/>
-  <text x="617" y="712" font-size="13" font-weight="700" fill="#1e3a8a">Cube feedback wiring (K1d)</text>
-  <text x="617" y="732" class="s">• Jumper AUX OUT 1 and 2. K1d connects them to GND while the chain is closed.</text>
-  <text x="617" y="750" class="s">• Chain open or wire broken: the pull-up reads HIGH, so Hold + Disarm.</text>
-  <text x="617" y="768" class="s">• Pins are 3.3 V logic: a dry contact to GND only, never apply voltage.</text>
-  <text x="617" y="786" class="s">• SERVO9/10_FUNCTION = -1 (GPIO); reboot the Cube after uploading.</text>
-  <text x="617" y="802" class="s">• Applied at boot too, unlike the RC5 Hold switch.</text>
+  <rect width="1400" height="1320" fill="#ffffff"/>
+  <text x="24" y="36" font-size="22" font-weight="700" fill="#0f172a">Safety chain: original rover wiring + deadman and wireless E-stop in series with the rover E-stop</text>
+  <text x="24" y="60" class="s">Numbers match the photo files in original_wiring_images/ where one exists (e.g. ③ = 3_e-stop_button_*). Dashed boxes repeat a component drawn in the other band.</text>
+  <rect x="12" y="80" width="1376" height="495" rx="12" fill="#fffbeb" stroke="#f59e0b" stroke-width="1.5"/>
+  <text x="28" y="106" class="h" fill="#92400e">A · Original wiring (before the Cube, deadman and wireless E-stop)</text>
+  <rect x="40" y="130" width="230" height="90" rx="8" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+  <text x="54" y="154" class="t">Battery string</text>
+  <text x="54" y="173" class="s">4 × 12 V in series = 48 V</text>
+  <text x="54" y="189" class="s">taps: 12 V · 24 V · 48 V</text>
+  <text x="54" y="205" class="lbl">charged by ⑲, balanced by ⑥</text>
+  <circle cx="40" cy="130" r="12" fill="#334155" stroke="#ffffff" stroke-width="2"/>
+  <text x="40" y="134.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">1</text>
+  <rect x="310" y="130" width="200" height="90" rx="8" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+  <text x="324" y="154" class="t">Circuit breaker</text>
+  <text x="324" y="173" class="s">CHNT DIN-rail breaker</text>
+  <text x="324" y="189" class="s">on the battery string</text>
+  <text x="324" y="205" class="lbl"></text>
+  <text x="324" y="211" class="w">verify rating</text>
+  <circle cx="310" cy="130" r="12" fill="#334155" stroke="#ffffff" stroke-width="2"/>
+  <text x="310" y="134.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">4</text>
+  <rect x="550" y="130" width="220" height="90" rx="8" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+  <text x="564" y="154" class="t">Main Power selector</text>
+  <text x="564" y="173" class="s">总电源, CHNT NP4, 2-position</text>
+  <text x="564" y="189" class="s">DPST: switches 12 V + 24 V</text>
+  <text x="564" y="205" class="lbl"></text>
+  <circle cx="550" cy="130" r="12" fill="#334155" stroke="#ffffff" stroke-width="2"/>
+  <text x="550" y="134.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">5</text>
+  <rect x="810" y="130" width="260" height="90" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+  <text x="824" y="154" class="t">Rover E-stop (急停)</text>
+  <text x="824" y="173" class="s">red mushroom, twist to reset</text>
+  <text x="824" y="189" class="s">3 poles: GND · 12 V · 24 V</text>
+  <text x="824" y="205" class="lbl">all three open when pressed</text>
+  <circle cx="810" cy="130" r="12" fill="#334155" stroke="#ffffff" stroke-width="2"/>
+  <text x="810" y="134.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">3</text>
+  <rect x="1110" y="120" width="260" height="80" rx="8" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+  <text x="1124" y="144" class="t">Power relay: 48 V (top)</text>
+  <text x="1124" y="163" class="s">SPST, coil 85/86 = 24 V via ③</text>
+  <text x="1124" y="179" class="s">30→87: battery 48 V → ⑬</text>
+  <circle cx="1110" cy="120" r="12" fill="#334155" stroke="#ffffff" stroke-width="2"/>
+  <text x="1110" y="124.5" font-size="9.5" font-weight="700" fill="#ffffff" text-anchor="middle">12a</text>
+  <rect x="1110" y="220" width="260" height="80" rx="8" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+  <text x="1124" y="244" class="t">Power relay: 24 V (bottom)</text>
+  <text x="1124" y="263" class="s">SPST, coil 85/86 = 24 V via ③</text>
+  <text x="1124" y="279" class="s">30→87: 24 V → ⑬</text>
+  <circle cx="1110" cy="220" r="12" fill="#334155" stroke="#ffffff" stroke-width="2"/>
+  <text x="1110" y="224.5" font-size="9.5" font-weight="700" fill="#ffffff" text-anchor="middle">12b</text>
+  <path d="M270,175 H308" class="pwr" marker-end="url(#arR)"/>
+  <path d="M510,175 H548" class="pwr" marker-end="url(#arR)"/>
+  <path d="M770,175 H808" class="pwr" marker-end="url(#arR)"/>
+  <path d="M1070,160 H1108" class="pwr" marker-end="url(#arR)"/>
+  <path d="M1090,160 V260 H1108" class="pwr" marker-end="url(#arR)"/>
+  <text x="1089" y="151" class="lbl" text-anchor="middle">24 V</text>
+  <rect x="40" y="255" width="230" height="70" rx="8" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+  <text x="54" y="279" class="t">Master switch</text>
+  <text x="54" y="298" class="s">blue rotary isolator</text>
+  <text x="54" y="314" class="s">battery − → chassis</text>
+  <circle cx="40" cy="255" r="12" fill="#334155" stroke="#ffffff" stroke-width="2"/>
+  <text x="40" y="259.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">2</text>
+  <path d="M155,220 V253" class="gnd" marker-end="url(#arK)"/>
+  <path d="M270,290 H300 V306" class="gnd"/><path d="M288,306 H312 M292,312 H308 M297,318 H303" stroke="#334155" stroke-width="2"/>
+  <text x="318" y="312" class="lbl" text-anchor="start">chassis</text>
+  <rect x="360" y="255" width="200" height="70" rx="8" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+  <text x="374" y="279" class="t">Battery balancer</text>
+  <text x="374" y="298" class="s">keeps the four 12 V</text>
+  <text x="374" y="314" class="s">batteries balanced</text>
+  <circle cx="360" cy="255" r="12" fill="#334155" stroke="#ffffff" stroke-width="2"/>
+  <text x="360" y="259.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">6</text>
+  <path d="M250,220 V238 H460 V253" class="ctl"/>
+  <path d="M940,220 V352" class="pwr" marker-end="url(#arR)"/>
+  <path d="M940,330 H665 V352" class="pwr" marker-end="url(#arR)"/>
+  <text x="948" y="300" class="lbl" text-anchor="start">12 V via ③</text>
+  <path d="M1370,160 H1386 V385 H1372" class="pwr" marker-end="url(#arR)"/>
+  <path d="M1240,300 V352" class="pwr" marker-end="url(#arR)"/>
+  <text x="1248" y="332" class="lbl" text-anchor="start">24 V</text>
+  <text x="1380" y="332" class="lbl" text-anchor="end">48 V</text>
+  <rect x="550" y="355" width="230" height="90" rx="8" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+  <text x="564" y="379" class="t">Gas engine controller</text>
+  <text x="564" y="398" class="s">electronic, 12 V via ③</text>
+  <text x="564" y="414" class="s">start / stop from ⑨ / ⑩</text>
+  <text x="564" y="430" class="lbl">12 V removed → engine stops</text>
+  <circle cx="550" cy="355" r="12" fill="#334155" stroke="#ffffff" stroke-width="2"/>
+  <text x="550" y="359.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">16</text>
+  <rect x="810" y="355" width="260" height="90" rx="8" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+  <text x="824" y="379" class="t">RC receiver</text>
+  <text x="824" y="398" class="s">12 V via ③</text>
+  <text x="824" y="414" class="s">ch1 throttle, ch2 steer → ⑬</text>
+  <text x="824" y="430" class="lbl"></text>
+  <text x="824" y="436" class="w">new design: SBUS → Cube ⑳</text>
+  <circle cx="810" cy="355" r="12" fill="#334155" stroke="#ffffff" stroke-width="2"/>
+  <text x="810" y="359.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">15</text>
+  <rect x="1110" y="355" width="260" height="90" rx="8" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+  <text x="1124" y="379" class="t">Track motor controller</text>
+  <text x="1124" y="398" class="s">dual channel, encoder A / B ports</text>
+  <text x="1124" y="414" class="s">48 V via ⑫a, 24 V via ⑫b</text>
+  <text x="1124" y="430" class="lbl">mixed mode: ch1 throttle, ch2 steer</text>
+  <circle cx="1110" cy="355" r="12" fill="#334155" stroke="#ffffff" stroke-width="2"/>
+  <text x="1110" y="359.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">13</text>
+  <path d="M1070,400 H1108" class="ctl" marker-end="url(#arP)"/>
+  <text x="1089" y="392" class="lbl" text-anchor="middle">PWM</text>
+  <rect x="310" y="350" width="200" height="70" rx="8" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+  <text x="324" y="374" class="t">Engine Start</text>
+  <text x="324" y="393" class="s">green NP4, momentary, 12 V</text>
+  <text x="324" y="409" class="s">don't crank &gt; 2 s</text>
+  <circle cx="310" cy="350" r="12" fill="#334155" stroke="#ffffff" stroke-width="2"/>
+  <text x="310" y="354.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">9</text>
+  <rect x="310" y="435" width="200" height="70" rx="8" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+  <text x="324" y="459" class="t">Engine Stop</text>
+  <text x="324" y="478" class="s">red NP4 push button, 12 V</text>
+  <text x="324" y="494" class="s"></text>
+  <circle cx="310" cy="435" r="12" fill="#334155" stroke="#ffffff" stroke-width="2"/>
+  <text x="310" y="439.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">10</text>
+  <path d="M510,385 H548" class="ctl" marker-end="url(#arP)"/>
+  <path d="M510,470 H530 V430 H548" class="ctl" marker-end="url(#arP)"/>
+  <rect x="550" y="475" width="230" height="80" rx="8" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+  <text x="564" y="499" class="t">Gas engine</text>
+  <text x="564" y="518" class="s">electric start via ⑯</text>
+  <text x="564" y="534" class="s">drives blade ⑱ and generator ⑲</text>
+  <circle cx="550" cy="475" r="12" fill="#334155" stroke="#ffffff" stroke-width="2"/>
+  <text x="550" y="479.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">17</text>
+  <path d="M665,445 V473" class="pwr" marker-end="url(#arR)"/>
+  <rect x="810" y="475" width="260" height="80" rx="8" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+  <text x="824" y="499" class="t">Mowing blade</text>
+  <text x="824" y="518" class="s">on the engine output shaft</text>
+  <text x="824" y="534" class="s">stops only when ⑰ stops</text>
+  <circle cx="810" cy="475" r="12" fill="#334155" stroke="#ffffff" stroke-width="2"/>
+  <text x="810" y="479.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">18</text>
+  <path d="M780,515 H808" class="gnd" marker-end="url(#arK)"/>
+  <text x="794" y="507" class="lbl" text-anchor="middle">shaft</text>
+  <rect x="40" y="370" width="230" height="80" rx="8" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+  <text x="54" y="394" class="t">Generator</text>
+  <text x="54" y="413" class="s">driven by ⑰</text>
+  <text x="54" y="429" class="s">charges battery string ①</text>
+  <circle cx="40" cy="370" r="12" fill="#334155" stroke="#ffffff" stroke-width="2"/>
+  <text x="40" y="374.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">19</text>
+  <path d="M550,540 H155 V452" class="gnd" marker-end="url(#arK)"/>
+  <text x="300" y="534" class="lbl" text-anchor="start">driven by the engine</text>
+  <path d="M40,410 H24 V175 H38" class="pwr" marker-end="url(#arR)"/>
+  <text x="16" y="300" class="lbl" text-anchor="middle" transform="rotate(-90 16 300)">charges ①</text>
+  <rect x="1110" y="475" width="260" height="80" rx="8" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+  <text x="1124" y="499" class="t">Left + right track motors</text>
+  <text x="1124" y="518" class="s">brushless, encoders → ⑬</text>
+  <text x="1124" y="534" class="s">zero-turn: ch1 1500 + ch2 moved</text>
+  <circle cx="1110" cy="475" r="12" fill="#334155" stroke="#ffffff" stroke-width="2"/>
+  <text x="1110" y="479.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">14</text>
+  <path d="M1240,445 V473" class="pwr" marker-end="url(#arR)"/>
+  <rect x="12" y="595" width="1376" height="440" rx="12" fill="#f5f9ff" stroke="#93c5fd" stroke-width="1.5"/>
+  <text x="28" y="621" class="h" fill="#1e3a8a">B · Additions: ㉓ and ㉔ in series with ③ on the 12 V and 24 V leads (nothing else added)</text>
+  <rect x="300" y="655" width="240" height="80" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+  <text x="314" y="679" class="t">Wireless E-stop handheld</text>
+  <text x="314" y="698" class="s">separate radio + battery</text>
+  <text x="314" y="714" class="s">latching, held by the observer</text>
+  <circle cx="300" cy="655" r="12" fill="#1e40af" stroke="#ffffff" stroke-width="2"/>
+  <text x="300" y="659.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">22</text>
+  <rect x="590" y="655" width="230" height="80" rx="8" fill="#ffffff" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="6 4"/>
+  <text x="604" y="679" class="t">RC receiver (from A)</text>
+  <text x="604" y="698" class="s">SBUS → Cube ⑳ RCIN</text>
+  <text x="604" y="714" class="s">ch5 PWM → deadman ㉔</text>
+  <circle cx="590" cy="655" r="12" fill="#64748b" stroke="#ffffff" stroke-width="2"/>
+  <text x="590" y="659.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">15</text>
+  <rect x="1110" y="655" width="260" height="80" rx="8" fill="#eef6ff" stroke="#1e40af" stroke-width="2"/>
+  <text x="1124" y="679" class="t">RC transmitter (driver)</text>
+  <text x="1124" y="698" class="s">ch1 throttle, ch2 steer, ch8 mode</text>
+  <text x="1124" y="714" class="s">ch5 momentary = deadman</text>
+  <circle cx="1110" cy="655" r="12" fill="#1e40af" stroke="#ffffff" stroke-width="2"/>
+  <text x="1110" y="659.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">21</text>
+  <path d="M1110,690 H822" class="wifi"/>
+  <rect x="40" y="790" width="220" height="90" rx="8" fill="#ffffff" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="6 4"/>
+  <text x="54" y="814" class="t">Rover E-stop (from A)</text>
+  <text x="54" y="833" class="s">12 V + 24 V from ⑤</text>
+  <text x="54" y="849" class="s">first device in the chain</text>
+  <circle cx="40" cy="790" r="12" fill="#64748b" stroke="#ffffff" stroke-width="2"/>
+  <text x="40" y="794.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">3</text>
+  <rect x="300" y="790" width="240" height="90" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+  <text x="314" y="814" class="t">Wireless E-stop receiver</text>
+  <text x="314" y="833" class="s">2-pole NO relay, held by heartbeat</text>
+  <text x="314" y="849" class="s">opens &lt; 0.5 s, latches</text>
+  <circle cx="300" cy="790" r="12" fill="#1e40af" stroke="#ffffff" stroke-width="2"/>
+  <text x="300" y="794.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">23</text>
+  <rect x="590" y="790" width="230" height="90" rx="8" fill="#eef6ff" stroke="#1e40af" stroke-width="2"/>
+  <text x="604" y="814" class="t">Deadman relay</text>
+  <text x="604" y="833" class="s">RC switch module on ch5</text>
+  <text x="604" y="849" class="s">2-pole NO, closed while held</text>
+  <circle cx="590" cy="790" r="12" fill="#1e40af" stroke="#ffffff" stroke-width="2"/>
+  <text x="590" y="794.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">24</text>
+  <rect x="870" y="770" width="200" height="75" rx="8" fill="#ffffff" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="6 4"/>
+  <text x="884" y="794" class="t">Power relay coils</text>
+  <text x="884" y="813" class="s">85/86 (from A) → GND</text>
+  <text x="884" y="829" class="s">drop → 48 V + 24 V to ⑬ cut</text>
+  <circle cx="870" cy="770" r="12" fill="#64748b" stroke="#ffffff" stroke-width="2"/>
+  <text x="870" y="774.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">12</text>
+  <rect x="870" y="865" width="200" height="75" rx="8" fill="#ffffff" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="6 4"/>
+  <text x="884" y="889" class="t">Engine controller</text>
+  <text x="884" y="908" class="s">12 V lost → engine stops</text>
+  <text x="884" y="924" class="s">blade ⑱ stops; restart ⑨</text>
+  <circle cx="870" cy="865" r="12" fill="#64748b" stroke="#ffffff" stroke-width="2"/>
+  <text x="870" y="869.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">16</text>
+  <path d="M260,815 H298" class="pwr" marker-end="url(#arR)"/>
+  <path d="M260,850 H298" class="pwr" marker-end="url(#arR)"/>
+  <path d="M540,815 H588" class="pwr" marker-end="url(#arR)"/>
+  <path d="M540,850 H588" class="pwr" marker-end="url(#arR)"/>
+  <text x="279" y="808" class="lbl" text-anchor="middle">24 V</text>
+  <text x="279" y="843" class="lbl" text-anchor="middle">12 V</text>
+  <path d="M820,815 H868" class="pwr" marker-end="url(#arR)"/>
+  <path d="M820,850 H845 V902 H868" class="pwr" marker-end="url(#arR)"/>
+  <text x="844" y="808" class="lbl" text-anchor="middle">24 V</text>
+  <text x="840" y="925" class="lbl" text-anchor="end">12 V</text>
+  <circle cx="280" cy="850" r="4" fill="#d6452f"/>
+  <path d="M280,850 V905 H420 V882" class="pwr" marker-end="url(#arR)"/>
+  <text x="288" y="922" class="lbl" text-anchor="start">㉓ module power: before its own contacts</text>
+  <circle cx="565" cy="850" r="4" fill="#d6452f"/>
+  <path d="M565,850 V702 H588" class="pwr" marker-end="url(#arR)"/>
+  <text x="572" y="762" class="lbl" text-anchor="start">12 V tap: ⑮ + ㉔ power</text>
+  <path d="M420,735 V788" class="wifi"/>
+  <text x="428" y="760" class="lbl" text-anchor="start">heartbeat</text>
+  <path d="M705,735 V788" class="ctl" marker-end="url(#arP)"/>
+  <text x="713" y="783" class="lbl" text-anchor="start">ch5 PWM</text>
+  <rect x="1110" y="790" width="260" height="215" rx="8" fill="#eef6ff" stroke="#1e40af" stroke-width="2"/>
+  <text x="1124" y="814" class="t">Cube Orange+</text>
+  <text x="1124" y="833" class="s">RCIN ← SBUS from ⑮</text>
+  <text x="1124" y="849" class="s">power: electronics bus, not via ③</text>
+  <text x="1124" y="865" class="lbl">OUT1 → ⑬ ch1 (throttle)</text>
+  <text x="1124" y="881" class="lbl">OUT2 → ⑬ ch2 (steer)</text>
+  <text x="1124" y="897" class="lbl">ch5 released → Hold (RC5_OPTION 54)</text>
+  <text x="1124" y="913" class="lbl">③/㉓ open → ⑮ off → RC failsafe</text>
+  <text x="1124" y="929" class="lbl">   → Hold (FS_ACTION 2, 1.5 s)</text>
+  <text x="1124" y="945" class="lbl">no feedback wiring needed</text>
+  <circle cx="1110" cy="790" r="12" fill="#1e40af" stroke="#ffffff" stroke-width="2"/>
+  <text x="1110" y="794.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">20</text>
+  <path d="M822,715 H1090 V845 H1108" class="dat" marker-end="url(#arB)"/>
+  <text x="1086" y="708" class="lbl" text-anchor="end">SBUS</text>
+  <path d="M1370,820 H1388 V420 H1372" class="ctl" marker-end="url(#arP)"/>
+  <text x="1382" y="765" class="lbl" text-anchor="end">OUT1/2</text>
+  <text x="40" y="975" class="s" text-anchor="start">Nothing else is added: ③, ㉓ and ㉔ just break the 12 V and 24 V leads. The existing ⑫ relays stop the tracks and ⑯ stops the</text>
+  <text x="40" y="993" class="s" text-anchor="start">engine and the blade on its shaft. Each of ㉓ and ㉔ needs 2 poles (DPST), one per lead.</text>
+  <rect x="12" y="1050" width="680" height="190" rx="10" fill="#fef2f2" stroke="#dc2626"/>
+  <text x="28" y="1074" font-size="13" font-weight="700" fill="#991b1b">Fail-safe rules for the additions</text>
+  <text x="28" y="1096" class="s" text-anchor="start">• Series on both leads: ⑤ → ③ → ㉓ → ㉔ → 24 V to ⑫ coils and 12 V to ⑯. Any one opening stops all.</text>
+  <text x="28" y="1115" class="s" text-anchor="start">• Power taps: ㉓ module before its own contacts; ⑮ receiver + ㉔ module between ㉓ and ㉔.</text>
+  <text x="28" y="1134" class="s" text-anchor="start">   If ㉔ cut its own receiver's power, the deadman could never close again.</text>
+  <text x="28" y="1153" class="s" text-anchor="start">• Cube ⑳ on the electronics bus: ③ / ㉓ open → ⑮ unpowered → RC failsafe → Hold.</text>
+  <text x="28" y="1172" class="s" text-anchor="start">• Blade is on the engine shaft: every stop also stops the engine. Restart it with ⑨.</text>
+  <text x="28" y="1191" class="s" text-anchor="start">• Receiver failsafe: no pulses (or ch5 = released), never hold-last.</text>
+  <text x="28" y="1210" class="s" text-anchor="start">• Unpowered tracks may freewheel on slopes: add spring-applied brakes if needed.</text>
+  <rect x="708" y="1050" width="680" height="190" rx="10" fill="#fffbeb" stroke="#f59e0b"/>
+  <text x="724" y="1074" font-size="13" font-weight="700" fill="#92400e">Verify on the rover before field use</text>
+  <text x="724" y="1096" class="s" text-anchor="start">• ㉓ / ㉔ relay contacts rated for the 12 V and 24 V lead currents</text>
+  <text x="724" y="1115" class="s" text-anchor="start">   (⑫ coils, ⑯ engine controller, ⑮ receiver).</text>
+  <text x="724" y="1134" class="s" text-anchor="start">• ㉔ RC switch module turns its output OFF on signal loss (not hold-last).</text>
+  <text x="724" y="1153" class="s" text-anchor="start">• ⑯ stops the engine when its 12 V is removed (expected from the original wiring).</text>
+  <text x="724" y="1172" class="s" text-anchor="start">• Bench: after ③ / ㉓ reset, the Cube stays in Hold until the deadman is pressed.</text>
+  <text x="724" y="1191" class="s" text-anchor="start">• ④ breaker rating and which tap it protects.</text>
+  <circle cx="39" cy="1262" r="11" fill="#334155"/>
+  <text x="58" y="1266" class="s" text-anchor="start">original component (band A)</text>
+  <circle cx="311" cy="1262" r="11" fill="#1e40af"/>
+  <text x="330" y="1266" class="s" text-anchor="start">new component (band B)</text>
+  <circle cx="571" cy="1262" r="11" fill="#64748b"/>
+  <text x="590" y="1266" class="s" text-anchor="start">dashed box = repeat of a component</text>
+  <text x="28" y="1296" class="lbl" text-anchor="start">Photos: ① 1_4_12vdc_batteries · ② 2_master_power_switch · ③ 3_e-stop_button_top/bottom · ⑤ 5–8_signal_switch · ⑨ 9 + 11_push_button_start · ⑩ 10_push_button_stop · ⑫ 12_power_relays · ⑬ motor_controller_1–3 · ④ ⑥ seen in photos 1–2</text>
 </svg>

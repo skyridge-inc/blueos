@@ -1,122 +1,125 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 674" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 712" font-family="Segoe UI, Helvetica, Arial, sans-serif">
   <defs><style>.t{font-size:13px;font-weight:700;fill:#0f172a}.s{font-size:12px;fill:#334155}.c{font-size:12px;font-weight:600}</style></defs>
-  <rect width="1200" height="674" fill="#ffffff"/>
+  <rect width="1200" height="712" fill="#ffffff"/>
   <text x="20" y="34" font-size="22" font-weight="700" fill="#0f172a">Stop coverage: which layer stops the mower</text>
-  <text x="20" y="58" class="s">Hardware layers stop by opening K1 (track and blade ENABLE). The ArduPilot layer stops by switching to Hold (OUT1 and OUT2 = 1500 µs). No single layer covers everything.</text>
-  <rect x="20" y="84" width="1160" height="40" fill="#1e293b" rx="6"/>
-  <text x="32" y="109" font-size="13" font-weight="700" fill="#ffffff">Event</text>
-  <text x="541.0" y="109" font-size="13" font-weight="700" fill="#ffffff" text-anchor="middle">Deadman relay (ch5)</text>
-  <text x="723.0" y="109" font-size="13" font-weight="700" fill="#ffffff" text-anchor="middle">Wireless E-stop</text>
-  <text x="905.0" y="109" font-size="13" font-weight="700" fill="#ffffff" text-anchor="middle">Rover E-stop button</text>
-  <text x="1087.0" y="109" font-size="13" font-weight="700" fill="#ffffff" text-anchor="middle">ArduPilot Hold</text>
-  <rect x="20" y="124" width="430" height="42" fill="#f8fafc" stroke="#e2e8f0"/>
-  <text x="32" y="150" class="s">Driver releases the deadman switch</text>
-  <rect x="453" y="127" width="176" height="36" rx="5" fill="#dcfce7"/>
-  <text x="541.0" y="150" class="c" fill="#15803d" text-anchor="middle">✓ opens K1</text>
-  <rect x="635" y="127" width="176" height="36" rx="5" fill="#f1f5f9"/>
-  <text x="723.0" y="150" class="c" fill="#94a3b8" text-anchor="middle">—</text>
-  <rect x="817" y="127" width="176" height="36" rx="5" fill="#f1f5f9"/>
-  <text x="905.0" y="150" class="c" fill="#94a3b8" text-anchor="middle">—</text>
-  <rect x="999" y="127" width="176" height="36" rx="5" fill="#dcfce7"/>
-  <text x="1087.0" y="150" class="c" fill="#15803d" text-anchor="middle">✓ ch5 → Hold, + K1d</text>
-  <rect x="20" y="166" width="430" height="42" fill="#ffffff" stroke="#e2e8f0"/>
-  <text x="32" y="192" class="s">RC transmitter battery dies or is switched off</text>
-  <rect x="453" y="169" width="176" height="36" rx="5" fill="#fef3c7"/>
-  <text x="541.0" y="192" class="c" fill="#b45309" text-anchor="middle">⚠ if RX failsafe = no pulses</text>
-  <rect x="635" y="169" width="176" height="36" rx="5" fill="#f1f5f9"/>
-  <text x="723.0" y="192" class="c" fill="#94a3b8" text-anchor="middle">—</text>
-  <rect x="817" y="169" width="176" height="36" rx="5" fill="#f1f5f9"/>
-  <text x="905.0" y="192" class="c" fill="#94a3b8" text-anchor="middle">—</text>
-  <rect x="999" y="169" width="176" height="36" rx="5" fill="#fef3c7"/>
-  <text x="1087.0" y="192" class="c" fill="#b45309" text-anchor="middle">⚠ if RX failsafe set</text>
-  <rect x="20" y="208" width="430" height="42" fill="#f8fafc" stroke="#e2e8f0"/>
-  <text x="32" y="234" class="s">RC receiver unplugged or loses power</text>
-  <rect x="453" y="211" width="176" height="36" rx="5" fill="#dcfce7"/>
-  <text x="541.0" y="234" class="c" fill="#15803d" text-anchor="middle">✓ no pulses → opens</text>
-  <rect x="635" y="211" width="176" height="36" rx="5" fill="#f1f5f9"/>
-  <text x="723.0" y="234" class="c" fill="#94a3b8" text-anchor="middle">—</text>
-  <rect x="817" y="211" width="176" height="36" rx="5" fill="#f1f5f9"/>
-  <text x="905.0" y="234" class="c" fill="#94a3b8" text-anchor="middle">—</text>
-  <rect x="999" y="211" width="176" height="36" rx="5" fill="#dcfce7"/>
-  <text x="1087.0" y="234" class="c" fill="#15803d" text-anchor="middle">✓ RC failsafe → Hold</text>
-  <rect x="20" y="250" width="430" height="42" fill="#ffffff" stroke="#e2e8f0"/>
-  <text x="32" y="276" class="s">Observer presses the wireless E-stop</text>
-  <rect x="453" y="253" width="176" height="36" rx="5" fill="#f1f5f9"/>
-  <text x="541.0" y="276" class="c" fill="#94a3b8" text-anchor="middle">—</text>
-  <rect x="635" y="253" width="176" height="36" rx="5" fill="#dcfce7"/>
-  <text x="723.0" y="276" class="c" fill="#15803d" text-anchor="middle">✓ opens, latches</text>
-  <rect x="817" y="253" width="176" height="36" rx="5" fill="#f1f5f9"/>
-  <text x="905.0" y="276" class="c" fill="#94a3b8" text-anchor="middle">—</text>
-  <rect x="999" y="253" width="176" height="36" rx="5" fill="#dcfce7"/>
-  <text x="1087.0" y="276" class="c" fill="#15803d" text-anchor="middle">✓ via K1d</text>
-  <rect x="20" y="292" width="430" height="42" fill="#f8fafc" stroke="#e2e8f0"/>
-  <text x="32" y="318" class="s">E-stop handheld dies or goes out of range</text>
-  <rect x="453" y="295" width="176" height="36" rx="5" fill="#f1f5f9"/>
-  <text x="541.0" y="318" class="c" fill="#94a3b8" text-anchor="middle">—</text>
-  <rect x="635" y="295" width="176" height="36" rx="5" fill="#dcfce7"/>
-  <text x="723.0" y="318" class="c" fill="#15803d" text-anchor="middle">✓ heartbeat lost → opens</text>
-  <rect x="817" y="295" width="176" height="36" rx="5" fill="#f1f5f9"/>
-  <text x="905.0" y="318" class="c" fill="#94a3b8" text-anchor="middle">—</text>
-  <rect x="999" y="295" width="176" height="36" rx="5" fill="#dcfce7"/>
-  <text x="1087.0" y="318" class="c" fill="#15803d" text-anchor="middle">✓ via K1d</text>
-  <rect x="20" y="334" width="430" height="42" fill="#ffffff" stroke="#e2e8f0"/>
-  <text x="32" y="360" class="s">Someone hits the rover E-stop button</text>
-  <rect x="453" y="337" width="176" height="36" rx="5" fill="#f1f5f9"/>
-  <text x="541.0" y="360" class="c" fill="#94a3b8" text-anchor="middle">—</text>
-  <rect x="635" y="337" width="176" height="36" rx="5" fill="#f1f5f9"/>
-  <text x="723.0" y="360" class="c" fill="#94a3b8" text-anchor="middle">—</text>
-  <rect x="817" y="337" width="176" height="36" rx="5" fill="#dcfce7"/>
-  <text x="905.0" y="360" class="c" fill="#15803d" text-anchor="middle">✓ opens, latches</text>
-  <rect x="999" y="337" width="176" height="36" rx="5" fill="#dcfce7"/>
-  <text x="1087.0" y="360" class="c" fill="#15803d" text-anchor="middle">✓ via K1d</text>
-  <rect x="20" y="376" width="430" height="42" fill="#f8fafc" stroke="#e2e8f0"/>
-  <text x="32" y="402" class="s">Coil fuse blows or a chain wire breaks</text>
-  <rect x="453" y="379" width="176" height="36" rx="5" fill="#dcfce7"/>
-  <text x="541.0" y="402" class="c" fill="#15803d" text-anchor="middle">✓ K1 drops</text>
-  <rect x="635" y="379" width="176" height="36" rx="5" fill="#dcfce7"/>
-  <text x="723.0" y="402" class="c" fill="#15803d" text-anchor="middle">✓ K1 drops</text>
-  <rect x="817" y="379" width="176" height="36" rx="5" fill="#dcfce7"/>
-  <text x="905.0" y="402" class="c" fill="#15803d" text-anchor="middle">✓ K1 drops</text>
-  <rect x="999" y="379" width="176" height="36" rx="5" fill="#dcfce7"/>
-  <text x="1087.0" y="402" class="c" fill="#15803d" text-anchor="middle">✓ via K1d (pull-up)</text>
-  <rect x="20" y="418" width="430" height="42" fill="#ffffff" stroke="#e2e8f0"/>
-  <text x="32" y="444" class="s">Cube crashes, freezes or browns out</text>
-  <rect x="453" y="421" width="176" height="36" rx="5" fill="#dcfce7"/>
-  <text x="541.0" y="444" class="c" fill="#15803d" text-anchor="middle">✓ on release</text>
-  <rect x="635" y="421" width="176" height="36" rx="5" fill="#dcfce7"/>
-  <text x="723.0" y="444" class="c" fill="#15803d" text-anchor="middle">✓ on press</text>
-  <rect x="817" y="421" width="176" height="36" rx="5" fill="#dcfce7"/>
-  <text x="905.0" y="444" class="c" fill="#15803d" text-anchor="middle">✓ on press</text>
-  <rect x="999" y="421" width="176" height="36" rx="5" fill="#fee2e2"/>
-  <text x="1087.0" y="444" class="c" fill="#b91c1c" text-anchor="middle">✗ cannot act</text>
-  <rect x="20" y="460" width="430" height="42" fill="#f8fafc" stroke="#e2e8f0"/>
-  <text x="32" y="486" class="s">Mode changed (GCS / mode switch) while released</text>
-  <rect x="453" y="463" width="176" height="36" rx="5" fill="#dcfce7"/>
-  <text x="541.0" y="486" class="c" fill="#15803d" text-anchor="middle">✓ power stays cut</text>
-  <rect x="635" y="463" width="176" height="36" rx="5" fill="#dcfce7"/>
-  <text x="723.0" y="486" class="c" fill="#15803d" text-anchor="middle">✓ on press</text>
-  <rect x="817" y="463" width="176" height="36" rx="5" fill="#dcfce7"/>
-  <text x="905.0" y="486" class="c" fill="#15803d" text-anchor="middle">✓ on press</text>
-  <rect x="999" y="463" width="176" height="36" rx="5" fill="#fee2e2"/>
-  <text x="1087.0" y="486" class="c" fill="#b91c1c" text-anchor="middle">✗ leaves Hold</text>
-  <rect x="20" y="502" width="430" height="42" fill="#ffffff" stroke="#e2e8f0"/>
-  <text x="32" y="528" class="s">Signal wire Cube → track controller comes loose</text>
-  <rect x="453" y="505" width="176" height="36" rx="5" fill="#dcfce7"/>
-  <text x="541.0" y="528" class="c" fill="#15803d" text-anchor="middle">✓ on release</text>
-  <rect x="635" y="505" width="176" height="36" rx="5" fill="#dcfce7"/>
-  <text x="723.0" y="528" class="c" fill="#15803d" text-anchor="middle">✓ on press</text>
-  <rect x="817" y="505" width="176" height="36" rx="5" fill="#dcfce7"/>
-  <text x="905.0" y="528" class="c" fill="#15803d" text-anchor="middle">✓ on press</text>
-  <rect x="999" y="505" width="176" height="36" rx="5" fill="#fee2e2"/>
-  <text x="1087.0" y="528" class="c" fill="#b91c1c" text-anchor="middle">✗ cannot act</text>
-  <rect x="20" y="570" width="26" height="18" rx="4" fill="#dcfce7" stroke="#15803d"/>
-  <text x="54" y="584" class="s">stops the mower</text>
-  <rect x="240" y="570" width="26" height="18" rx="4" fill="#fef3c7" stroke="#b45309"/>
-  <text x="274" y="584" class="s">stops only if configured</text>
-  <rect x="460" y="570" width="26" height="18" rx="4" fill="#fee2e2" stroke="#b91c1c"/>
-  <text x="494" y="584" class="s">does not stop it</text>
-  <rect x="680" y="570" width="26" height="18" rx="4" fill="#f1f5f9" stroke="#94a3b8"/>
-  <text x="714" y="584" class="s">not involved</text>
-  <text x="20" y="618" class="s">RX failsafe = the RC receiver's own failsafe setting. "Hold last values" defeats both the deadman relay and ArduPilot's RC failsafe.</text>
-  <text x="20" y="638" class="s">Rows 8–10 are why the hardware chain is the primary layer: ArduPilot cannot stop the tracks if it has crashed, lost the signal wire, or was told to leave Hold.</text>
+  <text x="20" y="58" class="s">Hardware layers open the 12 V and 24 V leads: the ⑫ relays cut 48 V + 24 V to the track controller, and ⑯ stops the engine (and the blade on its shaft).</text>
+  <text x="20" y="76" class="s">The ArduPilot layer switches to Hold (OUT1 and OUT2 = 1500 µs). No single layer covers everything.</text>
+  <rect x="20" y="102" width="1160" height="40" fill="#1e293b" rx="6"/>
+  <text x="32" y="127" font-size="13" font-weight="700" fill="#ffffff">Event</text>
+  <text x="541.0" y="127" font-size="13" font-weight="700" fill="#ffffff" text-anchor="middle">Deadman relay ㉔</text>
+  <text x="723.0" y="127" font-size="13" font-weight="700" fill="#ffffff" text-anchor="middle">Wireless E-stop ㉓</text>
+  <text x="905.0" y="127" font-size="13" font-weight="700" fill="#ffffff" text-anchor="middle">Rover E-stop ③</text>
+  <text x="1087.0" y="127" font-size="13" font-weight="700" fill="#ffffff" text-anchor="middle">ArduPilot Hold</text>
+  <rect x="20" y="142" width="430" height="42" fill="#f8fafc" stroke="#e2e8f0"/>
+  <text x="32" y="168" class="s">Driver releases the deadman switch</text>
+  <rect x="453" y="145" width="176" height="36" rx="5" fill="#dcfce7"/>
+  <text x="541.0" y="168" class="c" fill="#15803d" text-anchor="middle">✓ opens 12 V + 24 V</text>
+  <rect x="635" y="145" width="176" height="36" rx="5" fill="#f1f5f9"/>
+  <text x="723.0" y="168" class="c" fill="#94a3b8" text-anchor="middle">—</text>
+  <rect x="817" y="145" width="176" height="36" rx="5" fill="#f1f5f9"/>
+  <text x="905.0" y="168" class="c" fill="#94a3b8" text-anchor="middle">—</text>
+  <rect x="999" y="145" width="176" height="36" rx="5" fill="#dcfce7"/>
+  <text x="1087.0" y="168" class="c" fill="#15803d" text-anchor="middle">✓ ch5 → Hold</text>
+  <rect x="20" y="184" width="430" height="42" fill="#ffffff" stroke="#e2e8f0"/>
+  <text x="32" y="210" class="s">RC transmitter battery dies or is switched off</text>
+  <rect x="453" y="187" width="176" height="36" rx="5" fill="#fef3c7"/>
+  <text x="541.0" y="210" class="c" fill="#b45309" text-anchor="middle">⚠ if RX failsafe = no pulses</text>
+  <rect x="635" y="187" width="176" height="36" rx="5" fill="#f1f5f9"/>
+  <text x="723.0" y="210" class="c" fill="#94a3b8" text-anchor="middle">—</text>
+  <rect x="817" y="187" width="176" height="36" rx="5" fill="#f1f5f9"/>
+  <text x="905.0" y="210" class="c" fill="#94a3b8" text-anchor="middle">—</text>
+  <rect x="999" y="187" width="176" height="36" rx="5" fill="#fef3c7"/>
+  <text x="1087.0" y="210" class="c" fill="#b45309" text-anchor="middle">⚠ if RX failsafe set</text>
+  <rect x="20" y="226" width="430" height="42" fill="#f8fafc" stroke="#e2e8f0"/>
+  <text x="32" y="252" class="s">RC receiver unplugged or loses power</text>
+  <rect x="453" y="229" width="176" height="36" rx="5" fill="#dcfce7"/>
+  <text x="541.0" y="252" class="c" fill="#15803d" text-anchor="middle">✓ no pulses → opens</text>
+  <rect x="635" y="229" width="176" height="36" rx="5" fill="#f1f5f9"/>
+  <text x="723.0" y="252" class="c" fill="#94a3b8" text-anchor="middle">—</text>
+  <rect x="817" y="229" width="176" height="36" rx="5" fill="#f1f5f9"/>
+  <text x="905.0" y="252" class="c" fill="#94a3b8" text-anchor="middle">—</text>
+  <rect x="999" y="229" width="176" height="36" rx="5" fill="#dcfce7"/>
+  <text x="1087.0" y="252" class="c" fill="#15803d" text-anchor="middle">✓ RC failsafe → Hold</text>
+  <rect x="20" y="268" width="430" height="42" fill="#ffffff" stroke="#e2e8f0"/>
+  <text x="32" y="294" class="s">Observer presses the wireless E-stop</text>
+  <rect x="453" y="271" width="176" height="36" rx="5" fill="#f1f5f9"/>
+  <text x="541.0" y="294" class="c" fill="#94a3b8" text-anchor="middle">—</text>
+  <rect x="635" y="271" width="176" height="36" rx="5" fill="#dcfce7"/>
+  <text x="723.0" y="294" class="c" fill="#15803d" text-anchor="middle">✓ opens, latches</text>
+  <rect x="817" y="271" width="176" height="36" rx="5" fill="#f1f5f9"/>
+  <text x="905.0" y="294" class="c" fill="#94a3b8" text-anchor="middle">—</text>
+  <rect x="999" y="271" width="176" height="36" rx="5" fill="#dcfce7"/>
+  <text x="1087.0" y="294" class="c" fill="#15803d" text-anchor="middle">✓ ⑮ unpowered → Hold</text>
+  <rect x="20" y="310" width="430" height="42" fill="#f8fafc" stroke="#e2e8f0"/>
+  <text x="32" y="336" class="s">E-stop handheld dies or goes out of range</text>
+  <rect x="453" y="313" width="176" height="36" rx="5" fill="#f1f5f9"/>
+  <text x="541.0" y="336" class="c" fill="#94a3b8" text-anchor="middle">—</text>
+  <rect x="635" y="313" width="176" height="36" rx="5" fill="#dcfce7"/>
+  <text x="723.0" y="336" class="c" fill="#15803d" text-anchor="middle">✓ heartbeat lost → opens</text>
+  <rect x="817" y="313" width="176" height="36" rx="5" fill="#f1f5f9"/>
+  <text x="905.0" y="336" class="c" fill="#94a3b8" text-anchor="middle">—</text>
+  <rect x="999" y="313" width="176" height="36" rx="5" fill="#dcfce7"/>
+  <text x="1087.0" y="336" class="c" fill="#15803d" text-anchor="middle">✓ ⑮ unpowered → Hold</text>
+  <rect x="20" y="352" width="430" height="42" fill="#ffffff" stroke="#e2e8f0"/>
+  <text x="32" y="378" class="s">Someone hits the rover E-stop button</text>
+  <rect x="453" y="355" width="176" height="36" rx="5" fill="#f1f5f9"/>
+  <text x="541.0" y="378" class="c" fill="#94a3b8" text-anchor="middle">—</text>
+  <rect x="635" y="355" width="176" height="36" rx="5" fill="#f1f5f9"/>
+  <text x="723.0" y="378" class="c" fill="#94a3b8" text-anchor="middle">—</text>
+  <rect x="817" y="355" width="176" height="36" rx="5" fill="#dcfce7"/>
+  <text x="905.0" y="378" class="c" fill="#15803d" text-anchor="middle">✓ opens, latches</text>
+  <rect x="999" y="355" width="176" height="36" rx="5" fill="#dcfce7"/>
+  <text x="1087.0" y="378" class="c" fill="#15803d" text-anchor="middle">✓ ⑮ unpowered → Hold</text>
+  <rect x="20" y="394" width="430" height="42" fill="#f8fafc" stroke="#e2e8f0"/>
+  <text x="32" y="420" class="s">A 12 V or 24 V chain wire breaks</text>
+  <rect x="453" y="397" width="176" height="36" rx="5" fill="#dcfce7"/>
+  <text x="541.0" y="420" class="c" fill="#15803d" text-anchor="middle">✓ lead open</text>
+  <rect x="635" y="397" width="176" height="36" rx="5" fill="#dcfce7"/>
+  <text x="723.0" y="420" class="c" fill="#15803d" text-anchor="middle">✓ lead open</text>
+  <rect x="817" y="397" width="176" height="36" rx="5" fill="#dcfce7"/>
+  <text x="905.0" y="420" class="c" fill="#15803d" text-anchor="middle">✓ lead open</text>
+  <rect x="999" y="397" width="176" height="36" rx="5" fill="#fef3c7"/>
+  <text x="1087.0" y="420" class="c" fill="#b45309" text-anchor="middle">⚠ only above the ⑮ tap</text>
+  <rect x="20" y="436" width="430" height="42" fill="#ffffff" stroke="#e2e8f0"/>
+  <text x="32" y="462" class="s">Cube crashes, freezes or browns out</text>
+  <rect x="453" y="439" width="176" height="36" rx="5" fill="#dcfce7"/>
+  <text x="541.0" y="462" class="c" fill="#15803d" text-anchor="middle">✓ on release</text>
+  <rect x="635" y="439" width="176" height="36" rx="5" fill="#dcfce7"/>
+  <text x="723.0" y="462" class="c" fill="#15803d" text-anchor="middle">✓ on press</text>
+  <rect x="817" y="439" width="176" height="36" rx="5" fill="#dcfce7"/>
+  <text x="905.0" y="462" class="c" fill="#15803d" text-anchor="middle">✓ on press</text>
+  <rect x="999" y="439" width="176" height="36" rx="5" fill="#fee2e2"/>
+  <text x="1087.0" y="462" class="c" fill="#b91c1c" text-anchor="middle">✗ cannot act</text>
+  <rect x="20" y="478" width="430" height="42" fill="#f8fafc" stroke="#e2e8f0"/>
+  <text x="32" y="504" class="s">Mode changed (GCS / mode switch) while released</text>
+  <rect x="453" y="481" width="176" height="36" rx="5" fill="#dcfce7"/>
+  <text x="541.0" y="504" class="c" fill="#15803d" text-anchor="middle">✓ power stays cut</text>
+  <rect x="635" y="481" width="176" height="36" rx="5" fill="#dcfce7"/>
+  <text x="723.0" y="504" class="c" fill="#15803d" text-anchor="middle">✓ on press</text>
+  <rect x="817" y="481" width="176" height="36" rx="5" fill="#dcfce7"/>
+  <text x="905.0" y="504" class="c" fill="#15803d" text-anchor="middle">✓ on press</text>
+  <rect x="999" y="481" width="176" height="36" rx="5" fill="#fee2e2"/>
+  <text x="1087.0" y="504" class="c" fill="#b91c1c" text-anchor="middle">✗ leaves Hold</text>
+  <rect x="20" y="520" width="430" height="42" fill="#ffffff" stroke="#e2e8f0"/>
+  <text x="32" y="546" class="s">Signal wire Cube → track controller comes loose</text>
+  <rect x="453" y="523" width="176" height="36" rx="5" fill="#dcfce7"/>
+  <text x="541.0" y="546" class="c" fill="#15803d" text-anchor="middle">✓ on release</text>
+  <rect x="635" y="523" width="176" height="36" rx="5" fill="#dcfce7"/>
+  <text x="723.0" y="546" class="c" fill="#15803d" text-anchor="middle">✓ on press</text>
+  <rect x="817" y="523" width="176" height="36" rx="5" fill="#dcfce7"/>
+  <text x="905.0" y="546" class="c" fill="#15803d" text-anchor="middle">✓ on press</text>
+  <rect x="999" y="523" width="176" height="36" rx="5" fill="#fee2e2"/>
+  <text x="1087.0" y="546" class="c" fill="#b91c1c" text-anchor="middle">✗ cannot act</text>
+  <rect x="20" y="588" width="26" height="18" rx="4" fill="#dcfce7" stroke="#15803d"/>
+  <text x="54" y="602" class="s">stops the mower</text>
+  <rect x="240" y="588" width="26" height="18" rx="4" fill="#fef3c7" stroke="#b45309"/>
+  <text x="274" y="602" class="s">stops only if configured / wired</text>
+  <rect x="500" y="588" width="26" height="18" rx="4" fill="#fee2e2" stroke="#b91c1c"/>
+  <text x="534" y="602" class="s">does not stop it</text>
+  <rect x="720" y="588" width="26" height="18" rx="4" fill="#f1f5f9" stroke="#94a3b8"/>
+  <text x="754" y="602" class="s">not involved</text>
+  <text x="20" y="638" class="s">RX failsafe = the RC receiver's own failsafe setting. "Hold last values" defeats both the deadman relay and ArduPilot's RC failsafe.</text>
+  <text x="20" y="658" class="s">ArduPilot learns about ③ / ㉓ because the ⑮ receiver is powered between ㉓ and ㉔: an open E-stop unpowers it and the RC failsafe goes to Hold.</text>
+  <text x="20" y="678" class="s">Rows 8–10 are why the hardware chain (③ ㉓ ㉔ on the 12 V + 24 V leads) is the primary layer: ArduPilot cannot stop the tracks if it has</text>
+  <text x="20" y="698" class="s">crashed, lost the signal wire, or was told to leave Hold.</text>
 </svg>

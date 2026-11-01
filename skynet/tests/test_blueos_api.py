@@ -105,6 +105,9 @@ class TestEndpointPaths:
     def test_get_hotspot(self, client):
         self._call_and_check(client, "get_hotspot", "/wifi-manager/v1.0/hotspot")
 
+    def test_get_video_streams(self, client):
+        self._call_and_check(client, "get_video_streams", "/mavlink-camera-manager/streams")
+
 
 class TestSetters:
     """Verify setter methods POST to correct endpoints."""
@@ -132,6 +135,14 @@ class TestSetters:
         )
         assert client.set_bag("my_key", {"data": 1}) is True
         assert route.called
+
+    @respx.mock
+    def test_add_video_stream(self, client):
+        route = respx.post(f"{BASE_URL}/mavlink-camera-manager/streams").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        assert client.add_video_stream({"name": "front"}) is True
+        assert json.loads(route.calls[0].request.content) == {"name": "front"}
 
     @respx.mock
     def test_set_hostname_failure(self, client):

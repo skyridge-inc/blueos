@@ -15,10 +15,13 @@ from skynet.extract import (
     extract_config,
     extract_hostname_from_url,
     fetch_mediamtx_config,
+    fetch_video_streams,
     load_yaml,
+    plan_cockpit_stream_renames,
     output_filename,
     push_mediamtx_config,
     save_yaml,
+    video_stream_post_body,
 )
 
 
@@ -303,6 +306,74 @@ class TestPushMediamtxConfig:
         client.put_file.assert_not_called()
 
 
+def _mcm_status(name, video_source, endpoints, configuration=None):
+    return {
+        "id": "00000000-0000-0000-0000-000000000000",
+        "video_and_stream": {
+            "name": name,
+            "stream_information": {
+                "endpoints": endpoints,
+                "configuration": configuration or {"type": "video", "encode": "H265"},
+                "extended_configuration": None,
+            },
+            "video_source": video_source,
+        },
+    }
+
+
+class TestFetchVideoStreams:
+    def test_redirect_stream(self):
+        client = MagicMock()
+        client.get_video_streams.return_value = [_mcm_status(
+            "front",
+            {"Redirect": {"name": "Redirect source", "source": {"Redirect": "Redirect"}}},
+            ["rtsp://127.0.0.1:8555/front"],
+        )]
+        assert fetch_video_streams(client) == [
+            {"name": "front", "source": "Redirect", "endpoints": ["rtsp://127.0.0.1:8555/front"]}
+        ]
+
+    def test_local_stream_keeps_configuration(self):
+        config = {"type": "video", "encode": "H264", "height": 720, "width": 1280}
+        client = MagicMock()
+        client.get_video_streams.return_value = [_mcm_status(
+            "usb",
+            {"Local": {"name": "UVC", "device_path": "/dev/video0"}},
+            ["udp://192.168.2.1:5600"],
+            config,
+        )]
+        [entry] = fetch_video_streams(client)
+        assert entry["source"] == "/dev/video0"
+        assert entry["configuration"] == config
+
+    def test_unreachable_returns_none(self):
+        client = MagicMock()
+        client.get_video_streams.return_value = None
+        assert fetch_video_streams(client) is None
+
+
+class TestVideoStreamPostBody:
+    def test_redirect_gets_redirect_configuration(self):
+        body = video_stream_post_body(
+            {"name": "front", "source": "Redirect", "endpoints": ["rtsp://127.0.0.1:8555/front"]}
+        )
+        assert body == {
+            "name": "front",
+            "source": "Redirect",
+            "stream_information": {
+                "endpoints": ["rtsp://127.0.0.1:8555/front"],
+                "configuration": {"type": "redirect"},
+            },
+        }
+
+    def test_explicit_configuration_wins(self):
+        config = {"type": "video", "encode": "H264"}
+        body = video_stream_post_body(
+            {"name": "usb", "source": "/dev/video0", "endpoints": [], "configuration": config}
+        )
+        assert body["stream_information"]["configuration"] == config
+
+
 class TestFetchDhcpReservations:
     def test_missing_file_is_empty(self):
         from skynet.extract import fetch_dhcp_reservations
@@ -373,3 +444,90 @@ class TestAutopilotBase:
             "GPS1_TYPE": 26.0,                 # not in base
         }
         assert params_diff_from_base(params, base) == {"GPS1_TYPE": 26.0, "WP_RADIUS": 1.5}
+
+
+def _video_widget(stream: str) -> dict:
+    return {"component": "VideoPlayer", "options": {"internalStreamName": stream}}
+
+
+class TestPlanCockpitStreamRenames:
+    KEY = "cockpit/settings/sky1/cockpit-streams-correspondency"
+
+    def _device_bag(self, correspondency, **settings):
+        return {"cockpit": {"settings": {"sky1": {
+            "cockpit-streams-correspondency": correspondency, **settings,
+        }}}}
+
+    def test_repoints_widgets_in_every_setting(self):
+        profiles = [{"views": [
+            {"widgets": [_video_widget("Stream 1"), {"options": {}}]},
+            {"miniWidgetContainers": [{"widgets": [_video_widget("Stream 1")]}]},
+        ]}]
+        minis = {"containers": [_video_widget("Stream 1")]}
+        device = self._device_bag(
+            [{"name": "Stream 1", "externalId": "front"}],
+            **{"cockpit-saved-profiles-v8": profiles, "cockpit-mini-widgets-profile-v4": minis},
+        )
+        bag = {self.KEY: [{"name": "front", "externalId": "front"}]}
+
+        plans = plan_cockpit_stream_renames(bag, device)
+
+        assert len(plans) == 1
+        plan = plans[0]
+        assert plan.user == "sky1"
+        assert plan.renames == {"Stream 1": "front"}
+        assert plan.widget_count == 3
+        assert set(plan.updates) == {
+            "cockpit/settings/sky1/cockpit-saved-profiles-v8",
+            "cockpit/settings/sky1/cockpit-mini-widgets-profile-v4",
+        }
+        new_profiles = plan.updates["cockpit/settings/sky1/cockpit-saved-profiles-v8"]
+        assert new_profiles[0]["views"][0]["widgets"][0]["options"]["internalStreamName"] == "front"
+        # the device copy is left untouched
+        assert profiles[0]["views"][0]["widgets"][0]["options"]["internalStreamName"] == "Stream 1"
+
+    def test_only_renamed_streams_are_repointed(self):
+        profiles = [{"views": [{"widgets": [_video_widget("Stream 1"), _video_widget("Rear")]}]}]
+        device = self._device_bag(
+            [{"name": "Stream 1", "externalId": "front"}, {"name": "Rear", "externalId": "rear"}],
+            **{"cockpit-saved-profiles-v8": profiles},
+        )
+        bag = {self.KEY: [
+            {"name": "front", "externalId": "front"}, {"name": "Rear", "externalId": "rear"},
+        ]}
+
+        (plan,) = plan_cockpit_stream_renames(bag, device)
+        widgets = plan.updates["cockpit/settings/sky1/cockpit-saved-profiles-v8"][0]["views"][0]["widgets"]
+        assert [w["options"]["internalStreamName"] for w in widgets] == ["front", "Rear"]
+        assert plan.widget_count == 1
+
+    def test_no_plan_when_names_unchanged(self):
+        device = self._device_bag(
+            [{"name": "front", "externalId": "front"}],
+            **{"cockpit-saved-profiles-v8": [{"views": [{"widgets": [_video_widget("front")]}]}]},
+        )
+        bag = {self.KEY: [{"name": "front", "externalId": "front"}]}
+        assert plan_cockpit_stream_renames(bag, device) == []
+
+    def test_rename_without_widgets_has_no_updates(self):
+        device = self._device_bag([{"name": "Stream 1", "externalId": "front"}])
+        bag = {self.KEY: [{"name": "front", "externalId": "front"}]}
+        (plan,) = plan_cockpit_stream_renames(bag, device)
+        assert plan.renames == {"Stream 1": "front"}
+        assert plan.updates == {}
+        assert plan.widget_count == 0
+
+    @pytest.mark.parametrize("device", [
+        None,
+        {},
+        {"cockpit": {"settings": {"other-user": {}}}},
+        {"cockpit": {"settings": {"sky1": {"cockpit-streams-correspondency": "garbage"}}}},
+    ])
+    def test_nothing_known_on_device(self, device):
+        bag = {self.KEY: [{"name": "front", "externalId": "front"}]}
+        assert plan_cockpit_stream_renames(bag, device) == []
+
+    def test_ignores_unrelated_bag_keys(self):
+        device = self._device_bag([{"name": "Stream 1", "externalId": "front"}])
+        bag = {"major_tom": {"token": "x"}, "cockpit/settings/sky1/cockpit-custom-rtc-config": {}}
+        assert plan_cockpit_stream_renames(bag, device) == []
