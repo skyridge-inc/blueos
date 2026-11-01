@@ -66,7 +66,11 @@ with `skynet pixhawk write <sidecar> --yes --include-calibration`.
 | Command | Description |
 |---------|-------------|
 | `config download HOST [-o NAME]` | Snapshot a BlueOS host to `./config/<hostname>.yaml` (identity, extensions, bag, network, WiFi pins, hotspot, DHCP reservations, MediaMTX config, autopilot params that differ from `autopilot_base.yaml`) |
-| `config upload HOST FILE` | Provision a BlueOS host from that YAML |
+| `config upload HOST [FILE]` | Provision a BlueOS host from that YAML (default `./config/<rover>.yaml`) |
+
+`HOST` can be a bare rover name: `sky1` becomes `sky1.netbird.cloud`, and `config upload sky1`
+reads `config/sky1.yaml`. IPs and dotted hostnames are used as given; uploading to an IP needs
+`FILE`.
 
 `config download` always writes into `./config/` (run it from `skynet/`). The file is named
 after the device's BlueOS hostname, e.g. `config/sky1.yaml`, unless `-o NAME` gives another file

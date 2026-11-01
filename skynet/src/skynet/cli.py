@@ -468,6 +468,32 @@ def extract_config_cmd(
 
 MAVLINK_PORT = 5760
 CONFIG_DIR = "config"  # `config download` always writes rover YAMLs here
+ROVER_DOMAIN = "netbird.cloud"  # a bare rover name like "sky1" resolves here
+
+
+def _qualify_host(host: str) -> str:
+    """Append ROVER_DOMAIN to a bare rover name ("sky1" -> "sky1.netbird.cloud").
+
+    IPs, dotted hostnames, URLs, host:port and localhost are left as given.
+    """
+    if "." in host or ":" in host or host == "localhost":
+        return host
+    return f"{host}.{ROVER_DOMAIN}"
+
+
+def _rover_config_path(host: str) -> Path | None:
+    """Default rover YAML for a host: ./config/<first DNS label>.yaml; None for an IP."""
+    import ipaddress
+
+    name = host.split("://", 1)[-1].split("/", 1)[0]  # drop scheme and path
+    for candidate in (name, name.strip("[]"), name.split(":", 1)[0]):
+        try:
+            ipaddress.ip_address(candidate)
+            return None
+        except ValueError:
+            pass
+    label = name.split(":", 1)[0].split(".", 1)[0]
+    return Path(CONFIG_DIR) / f"{label}.yaml" if label and label != "localhost" else None
 
 
 def _ethernet_addresses(network: dict[str, Any], mode: str) -> list[tuple[str, str]]:
@@ -628,7 +654,9 @@ def _load_base_params(base: Path | None, rover_yaml: Path) -> tuple[Path | None,
 def download(
     host: Annotated[
         str,
-        typer.Argument(help="BlueOS IP or hostname (e.g., 192.168.2.2 or blueos.local)."),
+        typer.Argument(
+            help=f"Rover name (e.g. sky1 -> sky1.{ROVER_DOMAIN}), IP, or full hostname."
+        ),
     ],
     output: Annotated[
         Optional[str],
@@ -664,6 +692,7 @@ def download(
         save_yaml,
     )
 
+    host = _qualify_host(host)
     url = f"http://{host}" if not host.startswith("http") else host
     if output is not None:
         out_name = Path(output)
@@ -771,12 +800,16 @@ def download(
 def upload(
     host: Annotated[
         str,
-        typer.Argument(help="BlueOS IP or hostname (e.g., 192.168.2.2 or blueos.local)."),
+        typer.Argument(
+            help=f"Rover name (e.g. sky1 -> sky1.{ROVER_DOMAIN}), IP, or full hostname."
+        ),
     ],
     config_file: Annotated[
-        Path,
-        typer.Argument(help="Path to YAML configuration file."),
-    ],
+        Optional[Path],
+        typer.Argument(
+            help=f"Path to YAML configuration file. Default: ./{CONFIG_DIR}/<rover name>.yaml"
+        ),
+    ] = None,
     include_calibration: CalibrationOption = False,
     base: BaseOption = None,
     dry_run: Annotated[
@@ -811,7 +844,22 @@ def upload(
     )
     from .host_config import DNSMASQ_HOST_PATH, WIFI_BANDS
 
-    config = load_yaml(config_file)
+    from .exceptions import ParamFileError
+
+    if config_file is None:
+        config_file = _rover_config_path(host)
+        if config_file is None:
+            err_console.print(
+                "[red]Give the YAML file when uploading to an IP address "
+                f"(e.g. {CONFIG_DIR}/sky1.yaml).[/red]"
+            )
+            raise typer.Exit(1)
+    host = _qualify_host(host)
+    try:
+        config = load_yaml(config_file)
+    except ParamFileError as e:
+        err_console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
     base_path, base_params = _load_base_params(base, config_file)
 
     # Summarize what will be uploaded

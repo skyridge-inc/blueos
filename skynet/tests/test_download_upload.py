@@ -1122,3 +1122,64 @@ class TestUploadCockpitStreamRename:
         assert "Cockpit stream names: sky1" in result.output
         client.get_bag.assert_not_called()
         client.set_bag.assert_not_called()
+
+
+class TestRoverShortName:
+    """A bare rover name gets ROVER_DOMAIN and, for upload, ./config/<name>.yaml."""
+
+    @pytest.mark.parametrize("host, expected", [
+        ("sky1", "sky1.netbird.cloud"),
+        ("sky1.netbird.cloud", "sky1.netbird.cloud"),
+        ("192.168.2.2", "192.168.2.2"),
+        ("blueos.local", "blueos.local"),
+        ("localhost", "localhost"),
+        ("http://sky1", "http://sky1"),
+    ])
+    def test_qualify_host(self, host, expected):
+        from skynet.cli import _qualify_host
+        assert _qualify_host(host) == expected
+
+    @pytest.mark.parametrize("host, expected", [
+        ("sky1", Path("config/sky1.yaml")),
+        ("sky1.netbird.cloud", Path("config/sky1.yaml")),
+        ("http://sky2.netbird.cloud:80/", Path("config/sky2.yaml")),
+        ("192.168.2.2", None),
+        ("::1", None),
+        ("localhost", None),
+    ])
+    def test_rover_config_path(self, host, expected):
+        from skynet.cli import _rover_config_path
+        assert _rover_config_path(host) == expected
+
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_upload_short_name_finds_config_and_domain(self, mock_cls, tmp_path):
+        mock_cls.return_value = _mock_blueos_client()
+        (tmp_path / "config").mkdir()
+        (tmp_path / "config" / "sky1.yaml").write_text("hostname: sky1\n")
+
+        result = runner.invoke(app, ["config", "upload", "sky1", "-y"])
+        assert result.exit_code == 0, result.output
+        assert "sky1.netbird.cloud" in result.output
+        assert mock_cls.call_args.args[0] == "http://sky1.netbird.cloud"
+
+    def test_upload_short_name_missing_config(self):
+        result = runner.invoke(app, ["config", "upload", "nosuch", "--dry-run"])
+        assert result.exit_code == 1
+        assert "config/nosuch.yaml" in result.output
+
+    def test_upload_ip_requires_config_file(self):
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", "--dry-run"])
+        assert result.exit_code == 1
+        assert "Give the YAML file" in result.output
+
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_download_short_name_adds_domain(self, mock_cls, mock_mavlink):
+        mock_cls.return_value = _mock_blueos_client()
+        mock_mavlink.return_value = _mock_mavlink_conn([
+            _make_param_msg("CRUISE_SPEED", 2.0, 0, 1),
+        ])
+        result = runner.invoke(app, ["config", "download", "sky1"])
+        assert result.exit_code == 0, result.output
+        assert mock_cls.call_args.args[0] == "http://sky1.netbird.cloud"
+        assert mock_mavlink.call_args.args[0] == "tcp:sky1.netbird.cloud:5760"
