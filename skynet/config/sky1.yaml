@@ -109,4 +109,7 @@ video_streams:   # mavlink-camera-manager streams; Cockpit plays these over WebR
   source: Redirect   # relay the MediaMTX path below, so MediaMTX stays the camera's only client
   endpoints:
   - rtsp://127.0.0.1:8555/front_cockpit
-autopilot_params: {}   # sky1 uses autopilot_base.yaml as-is; add overrides here
+autopilot_params:   # overrides on top of autopilot_base.yaml
+  # ArduPilot has no string name param. BRD_SERIAL_NUM is a free user-set integer
+  # (no effect on flight code), so it holds the rover number: sky1 -> 1.
+  BRD_SERIAL_NUM: 1
