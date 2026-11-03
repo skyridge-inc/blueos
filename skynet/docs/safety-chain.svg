@@ -178,7 +178,7 @@
   <text x="590" y="659.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">15</text>
   <rect x="1110" y="655" width="260" height="80" rx="8" fill="#eef6ff" stroke="#1e40af" stroke-width="2"/>
   <text x="1124" y="679" class="t">RC transmitter (driver)</text>
-  <text x="1124" y="698" class="s">ch1 throttle, ch2 steer, ch8 mode</text>
+  <text x="1124" y="698" class="s">ch1 throttle, ch4 steer, ch8 mode</text>
   <text x="1124" y="714" class="s">ch5 momentary = deadman</text>
   <circle cx="1110" cy="655" r="12" fill="#1e40af" stroke="#ffffff" stroke-width="2"/>
   <text x="1110" y="659.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">21</text>
@@ -238,7 +238,7 @@
   <text x="1124" y="833" class="s">RCIN ← SBUS from ⑮</text>
   <text x="1124" y="849" class="s">power: electronics bus, not via ③</text>
   <text x="1124" y="865" class="lbl">OUT1 → ⑬ ch1 (throttle)</text>
-  <text x="1124" y="881" class="lbl">OUT2 → ⑬ ch2 (steer)</text>
+  <text x="1124" y="881" class="lbl">OUT4 → ⑬ ch2 (steer)</text>
   <text x="1124" y="897" class="lbl">ch5 released → Hold (RC5_OPTION 54)</text>
   <text x="1124" y="913" class="lbl">③/㉓ open → ⑮ off → RC failsafe</text>
   <text x="1124" y="929" class="lbl">   → Hold (FS_ACTION 2, 1.5 s)</text>

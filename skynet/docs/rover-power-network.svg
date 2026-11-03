@@ -238,7 +238,7 @@
   <text x="760" y="874.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">12</text>
   <rect x="975" y="870" width="225" height="80" rx="8" class="box"/>
   <text x="987" y="893" class="t">Track motor controller</text>
-  <text x="987" y="912" class="s">OUT1 / OUT2 ← Cube</text>
+  <text x="987" y="912" class="s">OUT1 / OUT4 ← Cube</text>
   <text x="987" y="928" class="s">mixed mode → ⑭ L + R tracks</text>
   <circle cx="975" cy="870" r="12" fill="#334155" stroke="#ffffff" stroke-width="2"/>
   <text x="975" y="874.5" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">13</text>
@@ -256,7 +256,7 @@
   <path d="M557,925 V845 H320 V802" class="pwr" marker-end="url(#arR)"/>
   <text x="400" y="863" class="lbl" text-anchor="start">12 V tap → ⑮ + ㉔ module</text>
   <path d="M400,690 H420 V832 H1088 V868" class="ctl" marker-end="url(#arP)"/>
-  <text x="1080" y="826" class="lbl" text-anchor="end">OUT1 throttle / OUT2 steer</text>
+  <text x="1080" y="826" class="lbl" text-anchor="end">OUT1 throttle / OUT4 steer</text>
 
   <!-- Engine: 12 V lead after ㉔; blade on the shaft, generator charges the string -->
   <rect x="20" y="990" width="160" height="80" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>

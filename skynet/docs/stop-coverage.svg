@@ -3,7 +3,7 @@
   <rect width="1200" height="712" fill="#ffffff"/>
   <text x="20" y="34" font-size="22" font-weight="700" fill="#0f172a">Stop coverage: which layer stops the mower</text>
   <text x="20" y="58" class="s">Hardware layers open the 12 V and 24 V leads: the ⑫ relays cut 48 V + 24 V to the track controller, and ⑯ stops the engine (and the blade on its shaft).</text>
-  <text x="20" y="76" class="s">The ArduPilot layer switches to Hold (OUT1 and OUT2 = 1500 µs). No single layer covers everything.</text>
+  <text x="20" y="76" class="s">The ArduPilot layer switches to Hold (OUT1 and OUT4 = 1500 µs). No single layer covers everything.</text>
   <rect x="20" y="102" width="1160" height="40" fill="#1e293b" rx="6"/>
   <text x="32" y="127" font-size="13" font-weight="700" fill="#ffffff">Event</text>
   <text x="541.0" y="127" font-size="13" font-weight="700" fill="#ffffff" text-anchor="middle">Deadman relay ㉔</text>

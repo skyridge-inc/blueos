@@ -15,11 +15,11 @@ blade on its shaft). The deadman and the wireless E-stop are just **two more swi
 
 ## Why ArduPilot alone can't be the stop
 
-The track controller runs in **mixed mode**: Cube OUT1 is throttle, OUT2 is steering, and 1500 µs is
-neutral on both. In this mode **steering on its own spins the tracks**: with OUT1 at 1500 and OUT2
+The track controller runs in **mixed mode**: Cube OUT1 is throttle, OUT4 is steering, and 1500 µs is
+neutral on both. In this mode **steering on its own spins the tracks**: with OUT1 at 1500 and OUT4
 deflected, the mower turns on the spot. In ArduPilot Rover 4.6.2:
 
-| Mechanism | OUT1 (throttle) | OUT2 (steering) | Stops the tracks? |
+| Mechanism | OUT1 (throttle) | OUT4 (steering) | Stops the tracks? |
 |---|---|---|---|
 | Motor emergency stop (`RCx_OPTION=31`) | forced to 1500 | **still live**: `SRV_Channel::should_e_stop()` skips GroundSteering | **No** |
 | Disarm / `FS_ACTION=5` (Terminate) | 1500 | **still live**: `AP_MotorsUGV::output_regular()` always outputs steering, and Auto keeps steering while disarmed | **No** |
@@ -142,14 +142,14 @@ Behaviour in practice:
 
 1. **Mode changes while released.** Moving the mode switch, or a GCS or skynet mode command, takes
    the mower out of Hold. In mixed mode it could then steer, but ㉔ keeps both leads open.
-2. **Steering while stopped in Manual.** The steering stick drives OUT2 even when disarmed. Only the
+2. **Steering while stopped in Manual.** The steering stick drives OUT4 even when disarmed. Only the
    open chain keeps the tracks still.
 3. **A chain wire breaking below the ⑮ tap.** ⑫ drops and the tracks stop, but the receiver is still
    powered, so ArduPilot doesn't know until the deadman is released.
 4. **Cube or wiring failure.** If the Cube crashes, browns out or loses its signal wire to the
    controller, ArduPilot can't act.
 
-A Lua script on the Cube could narrow gaps 1–2. It would read ch5 directly and force OUT1/OUT2 to
+A Lua script on the Cube could narrow gaps 1–2. It would read ch5 directly and force OUT1/OUT4 to
 1500 whenever ch5 is released, regardless of mode or arming state. It isn't configured yet.
 
 ## Procedures

@@ -600,9 +600,9 @@ autopilot_params:
   RC9_REVERSED: 0.0
   RC9_TRIM: 1500.0
   RCMAP_PITCH: 3.0     # unused by Rover; moved off ch2
-  RCMAP_ROLL: 2.0      # receiver ch2 = steering (1500 neutral)
+  RCMAP_ROLL: 4.0      # receiver ch4 = steering (1500 neutral, <1500 left, >1500 right)
   RCMAP_THROTTLE: 1.0  # receiver ch1 = throttle (1500 neutral)
-  RCMAP_YAW: 4.0
+  RCMAP_YAW: 2.0       # unused by Rover; moved off ch4
   RC_OPTIONS: 160.0     # 32 (existing) + 128 ALLOW_SWITCH_REV so RC5_REVERSED applies to the switch
   RC_OVERRIDE_TIME: 3.0
   RC_PROTOCOLS: 1.0
@@ -694,17 +694,17 @@ autopilot_params:
   SERVO1_MIN: 1100.0
   SERVO1_REVERSED: 0.0
   SERVO1_TRIM: 1500.0
-  SERVO2_FUNCTION: 26.0   # GroundSteering -> track controller ch2 (counter-rotate, 1500 = straight)
+  SERVO2_FUNCTION: 0.0    # was GroundSteering; steering now on OUT4
   SERVO2_MAX: 1900.0
   SERVO2_MIN: 1100.0
   SERVO2_REVERSED: 0.0
   SERVO2_TRIM: 1500.0
-  SERVO3_FUNCTION: 0.0    # was Throttle; drive now on ch1/ch2
+  SERVO3_FUNCTION: 0.0    # was Throttle; drive now on OUT1/OUT4
   SERVO3_MAX: 1900.0
   SERVO3_MIN: 1100.0
   SERVO3_REVERSED: 0.0
   SERVO3_TRIM: 1500.0
-  SERVO4_FUNCTION: 0.0
+  SERVO4_FUNCTION: 26.0   # GroundSteering -> track controller ch2 (counter-rotate, 1500 = straight)
   SERVO4_MAX: 1900.0
   SERVO4_MIN: 1100.0
   SERVO4_REVERSED: 0.0
