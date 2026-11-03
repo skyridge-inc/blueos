@@ -83,7 +83,10 @@ Starlink): those addresses are always dynamic. Reach a rover by its NetBird name
 
 1. Hostname, vehicle name, bag entries
 2. **Extensions** — installs any `extensions:` entry whose identifier/tag is not already installed
-3. MediaMTX config file
+3. MediaMTX config file, after any `mediamtx.files` (helper files such as a relay script a
+   path's `runOnInit` runs; each path is relative to the YAML and is copied next to
+   `mediamtx.yml`, i.e. `/usr/blueos/extensions/mediamtx/` in the container). Download keeps
+   the list.
 4. `network.ethernet` addresses — `mode: unmanaged` → static IP; `mode: server` → BlueOS DHCP server on that interface (leases `.101`–`.200`)
 5. **`network.dhcp_reservations`** — writes `/etc/blueos/dnsmasq.conf` on the host and bind-mounts it over `/etc/dnsmasq.conf` in `blueos-core` (via `/root/.config/blueos/bootstrap/startup.json`, backed up first)
 6. **Autopilot hot-plug start** — `autopilot_autostart: true|false` installs/removes a udev rule

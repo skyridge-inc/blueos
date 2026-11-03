@@ -335,18 +335,27 @@ class BlueOSClient:
     def put_file(self, device_path: str, content: str) -> bool:
         """Write a file to the device via the file browser API.
 
-        device_path is relative to the file browser root scope.
+        device_path is relative to the file browser root scope. Creates the
+        file if it doesn't exist yet.
         """
         token = self._fb_auth()
         if token is None:
             return False
         path = device_path.lstrip("/")
+        headers = {"X-Auth": token, "Content-Type": "text/plain"}
         try:
             resp = self._client.put(
                 f"/file-browser/api/resources/{path}",
                 content=content.encode("utf-8"),
-                headers={"X-Auth": token, "Content-Type": "text/plain"},
+                headers=headers,
             )
+            if resp.status_code == 404:  # PUT only overwrites; POST creates
+                resp = self._client.post(
+                    f"/file-browser/api/resources/{path}",
+                    params={"override": "true"},
+                    content=content.encode("utf-8"),
+                    headers=headers,
+                )
             resp.raise_for_status()
             return True
         except (httpx.HTTPStatusError, httpx.HTTPError):

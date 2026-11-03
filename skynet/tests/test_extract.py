@@ -611,3 +611,30 @@ class TestWidgetOptionRules:
             "displayName": "Cube Temp", "variableName": "CubeTempF",
             "variableUnit": "°F", "variableMultiplier": 1}}
         assert plan_cockpit_widget_options({"sky1": self.RULE}, self._bag([done])) == []
+
+
+class TestLoadMediamtxFiles:
+    def test_maps_to_config_directory(self, tmp_path):
+        from skynet.extract import load_mediamtx_files
+        (tmp_path / "mediamtx").mkdir()
+        (tmp_path / "mediamtx" / "relay.py").write_text("x\n")
+        mediamtx = {"config_path": "extensions/mediamtx/mediamtx.yml", "files": ["mediamtx/relay.py"]}
+        assert load_mediamtx_files(mediamtx, tmp_path / "sky1.yaml") == {
+            "extensions/mediamtx/relay.py": "x\n"}
+
+    def test_none_and_missing_section(self, tmp_path):
+        from skynet.extract import load_mediamtx_files
+        assert load_mediamtx_files(None, tmp_path / "sky1.yaml") == {}
+        assert load_mediamtx_files({"config": {}}, tmp_path / "sky1.yaml") == {}
+
+    def test_rejects_bad_entries(self, tmp_path):
+        from skynet.exceptions import ParamFileError
+        from skynet.extract import load_mediamtx_files
+        (tmp_path / "a").mkdir()
+        (tmp_path / "b").mkdir()
+        (tmp_path / "a" / "relay.py").write_text("")
+        (tmp_path / "b" / "relay.py").write_text("")
+        with pytest.raises(ParamFileError, match="must be a list"):
+            load_mediamtx_files({"files": "relay.py"}, tmp_path / "sky1.yaml")
+        with pytest.raises(ParamFileError, match="two files named"):
+            load_mediamtx_files({"files": ["a/relay.py", "b/relay.py"]}, tmp_path / "sky1.yaml")

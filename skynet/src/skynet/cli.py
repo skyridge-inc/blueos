@@ -745,6 +745,7 @@ def download(
     from .extract import (
         AUTOPILOT_BASE_FILENAME,
         COCKPIT_WIDGET_OPTIONS_KEY,
+        MEDIAMTX_FILES_KEY,
         extract_config,
         fetch_mediamtx_config,
         load_yaml,
@@ -846,6 +847,10 @@ def download(
         config[BATTERIES_KEY] = batteries
     if scripts is not None:
         config[SCRIPTS_KEY] = scripts
+    old_mediamtx = existing_yaml.get("mediamtx")
+    if (isinstance(old_mediamtx, dict) and MEDIAMTX_FILES_KEY in old_mediamtx
+            and isinstance(config.get("mediamtx"), dict)):
+        config["mediamtx"][MEDIAMTX_FILES_KEY] = old_mediamtx[MEDIAMTX_FILES_KEY]
 
     # 4. Save
     save_yaml(config, out_path)
@@ -928,6 +933,7 @@ def upload(
         load_yaml,
         merge_autopilot_params,
         plan_cockpit_stream_renames,
+        load_mediamtx_files,
         plan_cockpit_widget_options,
         push_mediamtx_config,
         video_stream_post_body,
@@ -996,6 +1002,13 @@ def upload(
     mediamtx = config.get("mediamtx")
     if mediamtx and isinstance(mediamtx, dict) and mediamtx.get("config"):
         changes.append(f"  MediaMTX config: {mediamtx.get('config_path', 'unknown path')}")
+    try:
+        mediamtx_files = load_mediamtx_files(mediamtx, config_file)
+    except ParamFileError as e:
+        err_console.print(f"[red]{config_file}: {e}[/red]")
+        raise typer.Exit(1)
+    if mediamtx_files:
+        changes.append(f"  MediaMTX files: {', '.join(sorted(mediamtx_files))}")
     video_streams = [
         s for s in (config.get("video_streams") or [])
         if isinstance(s, dict) and s.get("name") and s.get("source")
@@ -1264,6 +1277,18 @@ def upload(
                     uploaded.append(f"extensions ({ext_ok})")
 
             with console.status("Uploading MediaMTX and network configuration..."):
+                # Helper files first: MediaMTX reloads on the config write and
+                # starts the commands that use them.
+                files_ok = 0
+                for device_path, content in sorted(mediamtx_files.items()):
+                    if client.put_file(device_path, content):
+                        files_ok += 1
+                    else:
+                        err_console.print(
+                            f"[yellow]Warning: Failed to write {device_path}[/yellow]"
+                        )
+                if files_ok:
+                    uploaded.append(f"mediamtx files ({files_ok})")
                 if mediamtx and isinstance(mediamtx, dict) and mediamtx.get("config"):
                     if push_mediamtx_config(client, mediamtx):
                         uploaded.append("mediamtx config")

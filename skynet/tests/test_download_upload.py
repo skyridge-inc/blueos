@@ -1437,3 +1437,63 @@ class TestUploadAutopilotScripts:
         data = yaml.safe_load(out.read_text())
         assert data["autopilot_scripts"] == ["scripts/cube_temp_f.lua"]
         assert "SCR_ENABLE" not in data["autopilot_params"]
+
+
+class TestMediamtxFiles:
+    @staticmethod
+    def _yaml(tmp_path, files=("mediamtx/relay.py",)):
+        (tmp_path / "mediamtx").mkdir()
+        (tmp_path / "mediamtx" / "relay.py").write_text("print('relay')\n")
+        cfg = tmp_path / "sky1.yaml"
+        cfg.write_text(yaml.dump({
+            "hostname": "sky1",
+            "mediamtx": {
+                "config_path": "extensions/mediamtx/mediamtx.yml",
+                "config": {"logLevel": "info"},
+                "files": list(files),
+            },
+        }))
+        return cfg
+
+    def test_dry_run_lists_files(self, tmp_path):
+        cfg = self._yaml(tmp_path)
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "--dry-run"])
+        assert result.exit_code == 0, result.output
+        assert "MediaMTX files: extensions/mediamtx/relay.py" in result.output
+
+    def test_missing_file_exits(self, tmp_path):
+        cfg = self._yaml(tmp_path, files=("mediamtx/nope.py",))
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "--dry-run"])
+        assert result.exit_code == 1
+        assert "cannot read" in result.output
+
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_files_written_before_config(self, mock_cls, mock_mavlink, tmp_path):
+        mock_client = _mock_blueos_client()
+        mock_cls.return_value = mock_client
+        cfg = self._yaml(tmp_path)
+
+        result = runner.invoke(app, ["config", "upload", "192.168.2.2", str(cfg), "-y"])
+        assert result.exit_code == 0, result.output
+        writes = [c.args for c in mock_client.put_file.call_args_list]
+        assert writes[0] == ("extensions/mediamtx/relay.py", "print('relay')\n")
+        assert writes[1][0] == "extensions/mediamtx/mediamtx.yml"
+        assert "mediamtx files (1)" in result.output
+
+    @patch("skynet.cli.mavlink_connection")
+    @patch("skynet.blueos_api.BlueOSClient")
+    def test_download_keeps_files(self, mock_cls, mock_mavlink, tmp_path):
+        mock_cls.return_value = _mock_blueos_client()
+        mock_mavlink.return_value = _mock_mavlink_conn([
+            _make_param_msg("CRUISE_SPEED", 2.0, 0, 1),
+        ])
+        (tmp_path / "config").mkdir()
+        out = tmp_path / "config" / "blueos.yaml"
+        out.write_text(yaml.dump({"mediamtx": {"config_path": "x", "config": {}, "files": ["mediamtx/relay.py"]}}))
+
+        result = runner.invoke(app, ["config", "download", "192.168.2.2"])
+        assert result.exit_code == 0, result.output
+        data = yaml.safe_load(out.read_text())
+        assert data["mediamtx"]["files"] == ["mediamtx/relay.py"]
+        assert data["mediamtx"]["config"]["logLevel"] == "info"   # config still from the device

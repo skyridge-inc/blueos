@@ -230,6 +230,19 @@ class TestFileBrowser:
         assert client.put_file("extensions/test.yml", "content") is False
 
     @respx.mock
+    def test_put_file_creates_missing_file(self, client):
+        self._mock_login()
+        respx.put(f"{BASE_URL}/file-browser/api/resources/extensions/new.py").mock(
+            return_value=httpx.Response(404)
+        )
+        create = respx.post(f"{BASE_URL}/file-browser/api/resources/extensions/new.py").mock(
+            return_value=httpx.Response(200)
+        )
+        assert client.put_file("extensions/new.py", "print(1)\n") is True
+        assert create.calls[0].request.url.params["override"] == "true"
+        assert create.calls[0].request.content == b"print(1)\n"
+
+    @respx.mock
     def test_token_cached(self, client):
         login_route = respx.post(f"{BASE_URL}/file-browser/api/login").mock(
             return_value=httpx.Response(200, text='"cached-token"')

@@ -70,6 +70,39 @@ def push_mediamtx_config(
     return client.put_file(config_path, content)
 
 
+# Helper files (e.g. relay scripts a path's runOnInit runs) that sit next to
+# mediamtx.yml, listed in the rover YAML's mediamtx section.
+MEDIAMTX_FILES_KEY = "files"
+
+
+def load_mediamtx_files(mediamtx: Any, yaml_path: Path) -> dict[str, str]:
+    """Read the mediamtx section's ``files``: {device path: content}.
+
+    Each entry is a path relative to the rover YAML; it is copied into the
+    directory that holds mediamtx.yml, under its own file name.
+
+    Raises:
+        ParamFileError: If the list is malformed or a file can't be read.
+    """
+    entries = mediamtx.get(MEDIAMTX_FILES_KEY) if isinstance(mediamtx, dict) else None
+    if entries is None:
+        return {}
+    if not isinstance(entries, list):
+        raise ParamFileError(f"mediamtx.{MEDIAMTX_FILES_KEY} must be a list of paths")
+    device_dir = Path(str(mediamtx.get("config_path") or MEDIAMTX_CONFIG_CANDIDATES[0])).parent
+    files: dict[str, str] = {}
+    for entry in entries:
+        path = yaml_path.parent / str(entry)
+        device_path = (device_dir / path.name).as_posix()
+        if device_path in files:
+            raise ParamFileError(f"mediamtx.{MEDIAMTX_FILES_KEY}: two files named {path.name}")
+        try:
+            files[device_path] = path.read_text()
+        except OSError as e:
+            raise ParamFileError(f"mediamtx.{MEDIAMTX_FILES_KEY}: cannot read {path}: {e}") from e
+    return files
+
+
 # mavlink-camera-manager's source string for a stream that relays an RTSP URL
 # (the URL is the stream's first endpoint).
 REDIRECT_SOURCE = "Redirect"
